@@ -226,28 +226,45 @@ class GameReader:
             unit, raw, txt = 0, best_raw, 0
         else:
             return None
+        raw = dict(raw)
+        if unit:
+            # The base MaxLife stat is the un-geared max.  The stats-list's
+            # second (merged/item) block carries the true max incl. gear
+            # bonuses, so a full merc shows e.g. 199/199 not 189/199.
+            slex = self.proc.read_ptr(unit + m.UNIT_OFFSET_STATSLISTEX)
+            if slex:
+                item_raw = self._read_stats(
+                    self.proc.read_ptr(slex + m.STATSLIST_ITEM_STAT_PTR),
+                    self.proc.read_ptr(slex + m.STATSLIST_ITEM_STAT_COUNT))
+                item_max = item_raw.get(m.STAT["MaxLife"], 0)
+                if item_max > raw.get(m.STAT["MaxLife"], 0):
+                    raw[m.STAT["MaxLife"]] = item_max
         hp, max_hp = self._merc_values(raw)
         level = raw.get(m.STAT["Level"], 0)
-        name = ""
-        if unit:
-            # Hireling names are UTF-16LE at +0x2C; unit_data is a garbled
-            # legacy buffer, so it is only a fallback.
-            name = self.proc.read_wide_string(unit + m.UNIT_OFFSET_NAME, 64)
-            if not name:
-                ud = self.proc.read_ptr(unit + m.UNIT_OFFSET_UNIT_DATA)
-                name = self.proc.read_string(ud) if ud else ""
-        # Drop control characters / garbage so the UI never shows junk.
-        if name and any(ord(c) < 32 for c in name):
-            name = ""
+        # The hireling's generated name is a UI resource string, not a field on
+        # the unit (reading unit+0x2C as UTF-16 only ever yields garbage), so we
+        # label the merc by its type instead.
         return {
             "hp": hp, "max_hp": max_hp,
             "raw_life": raw.get(m.STAT["Life"], 0),
             "raw_max_life": raw.get(m.STAT["MaxLife"], 0),
             "unit_id": self.proc.read_u32(unit + m.UNIT_OFFSET_UNIT_ID) if unit else 0,
-            "name": name,
+            "name": "",
             "type": m.MERC_TYPE.get(txt, f"Hireling ({txt})"),
             "level": level,
         }
+
+    @staticmethod
+    def _track_max(prev_max: int, stat: int, current: int) -> int:
+        """Tracked max HP/MP: shrink to ``stat`` when at/over it, else grow.
+
+        The MaxLife/MaxMana stat is the un-geared base, so when the player is at
+        or above it the observed value wins (gear bonuses) and unequipping a +max
+        item lets the max fall back down.  Below the stat (damaged) the max only
+        grows."""
+        if current >= stat:
+            return max(stat, current)
+        return max(prev_max, stat, current)
 
     @staticmethod
     def _merc_values(raw: dict) -> tuple[int, int]:
@@ -530,13 +547,13 @@ class GameReader:
             # Effective max HP/MP = running observed maximum, seeded by the MaxLife
             # stat (which is the base WITHOUT item/skill bonuses).  Gear/charm
             # bonuses are NOT in the stat, so once the player is ever at full the
-            # observed life (e.g. 131 with gear) becomes the true max.  We only
-            # grow the tracked max; we never shrink it (damage must not lower the
-            # max, and buff expiry only slightly over-reports until next full heal).
+            # observed life (e.g. 131 with gear) becomes the true max.  The max
+            # grows while damaged, but shrinks back when at/over the base stat so
+            # unequipping a +max item reads as the new lower max (never as damage).
             max_life_stat = stats.get(m.STAT["MaxLife"], 0)
             max_mana_stat = stats.get(m.STAT["MaxMana"], 0)
-            self._max_life = max(self._max_life, max_life_stat, life)
-            self._max_mana = max(self._max_mana, max_mana_stat, mana)
+            self._max_life = self._track_max(self._max_life, max_life_stat, life)
+            self._max_mana = self._track_max(self._max_mana, max_mana_stat, mana)
 
             eff_max_hp = self.max_override.get("player_hp") or self._max_life or 1
             eff_max_mp = self.max_override.get("player_mp") or self._max_mana or 1

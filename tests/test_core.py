@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,6 +43,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(c.cooldown("nope"), 2.0)
         self.assertEqual(c.key("nope"), "")
         self.assertEqual(c.keys_for("nope"), [])
+
+    def test_rejuv_defaults_are_critical(self):
+        c = cfg.AppConfig.load()
+        # Rejuv is the instant save for critical moments, so it defaults low.
+        self.assertEqual(c.threshold("rejuv_potion_at_life"), 25)
+        self.assertEqual(c.threshold("rejuv_potion_at_mana"), 25)
 
     def test_keys_for_supports_multiple_columns(self):
         c = cfg.AppConfig.load()
@@ -486,6 +493,23 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(GameReader._merc_values(raw3), (0, 189))
         # No max -> no merc.
         self.assertEqual(GameReader._merc_values({STAT["Life"]: 10}), (0, 0))
+        # Merged/item list max (199 incl. gear) reads as the true display max.
+        raw5 = {STAT["Life"]: 32768, STAT["MaxLife"]: 199 << 8}
+        self.assertEqual(GameReader._merc_values(raw5), (199, 199))
+
+    def test_track_max(self):
+        from d2r.reader import GameReader
+        t = GameReader._track_max
+        # Damage below the base stat only grows the max (stays latched).
+        self.assertEqual(t(120, 100, 50), 120)
+        # At/over the base stat the observed value wins (gear bonuses).
+        self.assertEqual(t(120, 100, 120), 120)
+        self.assertEqual(t(100, 100, 131), 131)
+        # Unequipping the +max item lets the max fall back to the base stat.
+        self.assertEqual(t(131, 100, 100), 100)
+        # Fresh watcher with no gear tracks the base stat directly.
+        self.assertEqual(t(0, 100, 100), 100)
+        self.assertEqual(t(0, 100, 60), 100)
 
 
 class RefillTests(unittest.TestCase):
@@ -841,6 +865,49 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(w._effective_cooldown("merc_rejuv"), 1.0)
         self.assertEqual(w._effective_cooldown("heal"), w.config.cooldown("heal"))
         self.assertEqual(w._effective_cooldown("merc_heal"), w.config.cooldown("merc_heal"))
+
+    def test_same_or_higher_grade_allowed_after_half_duration(self):
+        w = self._watcher()
+        w._last_potion_dur["heal"] = 10.24   # Super heal (606) restore window
+        w._last_potion_grade["heal"] = 4
+        w._last_used["heal"] = 100.0
+        # Same/higher grade: unlocked once half the duration has passed.
+        self.assertAlmostEqual(w._effective_cooldown("heal", 4), 5.12)
+        self.assertTrue(w._ready("heal", 105.5, candidate_grade=4))
+        self.assertFalse(w._ready("heal", 104.5, candidate_grade=4))
+        # Weaker grade: held for the full duration x margin (12.288 s).
+        self.assertAlmostEqual(w._effective_cooldown("heal", 2), 12.288)
+        self.assertFalse(w._ready("heal", 105.5, candidate_grade=2))
+        self.assertTrue(w._ready("heal", 113.0, candidate_grade=2))
+        # Unknown candidate grade stays conservative (full duration x margin).
+        self.assertAlmostEqual(w._effective_cooldown("heal"), 12.288)
+
+    def test_tick_repeats_same_grade_after_half_duration(self):
+        w = self._watcher()
+        w.config.keys["heal"] = ["Q", "R"]
+        snap = self._belt_snap(hp=140, columns=[self._col("Q", 602), self._col("R", 606)])
+        w._tick(snap)                                  # drinks Super on R (grade 4)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
+        w._last_used["heal"] = time.monotonic() - 6.0  # past the 5.12 s half-window
+        w.sender.pressed, w.sender.pressed_keys = [], []
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
+
+    def test_tick_holds_weaker_grade_until_margin(self):
+        w = self._watcher()
+        w.config.keys["heal"] = ["Q", "R"]
+        full = self._belt_snap(hp=140, columns=[self._col("Q", 602), self._col("R", 606)])
+        w._tick(full)                                  # Super heal on R (grade 4)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
+        w._last_used["heal"] = time.monotonic() - 5.0  # half of 10.24 s passed
+        w.sender.pressed, w.sender.pressed_keys = [], []
+        weaker = self._belt_snap(hp=140, columns=[self._col("Q", 602)])
+        w._tick(weaker)                                # only Minor (grade 0) left
+        self.assertEqual(w.sender.pressed_keys, [])    # held until 12.288 s
+        w._last_used["heal"] = time.monotonic() - 13.0
+        w.sender.pressed, w.sender.pressed_keys = [], []
+        w._tick(weaker)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "Q")])
 
     # ------------------------------------------------------- grade-aware
     def _col(self, key, txt, count=1):

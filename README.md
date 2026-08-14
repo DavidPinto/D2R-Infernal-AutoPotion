@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit).  It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.6.0` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.7.0` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`.  See
 > [Limitations](#limitations) below.
 
@@ -171,21 +171,21 @@ and how many slots are filled/free.
 |----------------------|----------------------|
 | Health potion        | HP ≤ 80%             |
 | Mana potion          | MP ≤ 60%             |
-| Rejuvenation         | HP ≤ 40% **or** MP < 40% |
+| Rejuvenation         | HP ≤ 25% **or** MP < 25% |
 | Merc health potion   | Merc HP ≤ 60%        |
 | Merc rejuv potion    | Merc HP ≤ 20%        |
 
-All adjustable in the UI (*Triggers* tab).  The same tab shows the real potion
-values (per class), a character-class dropdown (or *Auto (detected)*), and a
-**Safety margin (%)** slider.
+All adjustable in the UI (*Triggers* tab), which also has a **Safety margin (%)**
+slider: a same-or-stronger potion may be drunk again once the one in effect is
+half consumed, and this margin is how long a *weaker* potion is held back after
+the in-effect potion finishes restoring (rejuvenation is instant and ignores it).
 
 ### How potions actually work here
 
 Potions restore a class-dependent amount **over time** — they are not instant
-except rejuvenation.  The watcher never drinks a potion of the same kind again
-until its restore duration × the safety margin (default 20%) has passed, so a
-weak potion is never stacked on a strong one (two sips in a row would only
-average the fill and heal slower).  Per-class restore amounts:
+except rejuvenation.  The character's class is read from the live game each
+snapshot, so restore amounts always match who is playing.  Per-class restore
+amounts:
 
 | Heal potion | Duration | Druid/Necro/Sorc/Warlock | Amazon/Assassin/Paladin | Barbarian |
 |-------------|----------|--------------------------|-------------------------|-----------|
@@ -210,10 +210,11 @@ Rejuvenation restores **35%** of max HP+MP instantly (Full Rejuvenation 100%).
 The game's `MaxLife` stat reports the **base** value — item/skill bonuses (and
 Battle Orders) aren't always included.  The tool tracks the *running observed
 max* (the Go tool does the same), which latches the true value once you're at
-full HP.  If you want it correct immediately, use the **Manual max (0 = auto)**
-fields on the *Dashboard* tab to enter your real geared HP / MP / Merc HP; the
-percentages (and therefore potion thresholds) are then computed against those
-values.  The overrides persist in `config/config.json`.
+full HP, and shrinks back to the base when you remove a +max item (so that never
+reads as damage).  If you want it correct immediately, use the **Manual max
+(0 = auto)** fields on the *Dashboard* tab to enter your real geared HP / MP /
+Merc HP; the percentages (and therefore potion thresholds) are then computed
+against those values.  The overrides persist in `config/config.json`.
 
 ## Calibration (your build's potion codes)
 

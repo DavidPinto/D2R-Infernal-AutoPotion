@@ -68,8 +68,8 @@ DEFAULTS = {
     "thresholds": {
         "healing_potion_at": 80,     # use a health potion at/under this HP%
         "mana_potion_at": 60,        # use a mana potion at/under this MP%
-        "rejuv_potion_at_life": 40,  # prefer rejuv when HP% <= this ...
-        "rejuv_potion_at_mana": 40,  # ... or MP% < this
+        "rejuv_potion_at_life": 25,  # rejuv is for critical HP (instant save) ...
+        "rejuv_potion_at_mana": 25,  # ... or critical MP (instant save)
         "merc_healing_potion_at": 60,
         "merc_rejuv_potion_at": 20,
     },
@@ -98,12 +98,11 @@ DEFAULTS = {
         # (prefer a specific potion over a rejuv when only one stat is low) and
         # refill the belt per the layout/ratio plan below.
         "smart": True,
-        # Potions restore over a duration (rejuv is instant).  The app waits
-        # duration * (1 + margin) before drinking the same family again, which
-        # prevents stacking a weak potion on top of a strong one (two potions
-        # in a row average the fill over the total time, slower than the strong
-        # potion alone).  Config cooldowns are only a fallback while the potion
-        # on the belt is unknown.
+        # Potions restore over a duration (rejuv is instant).  A same-or-higher
+        # grade potion may be drunk once the in-effect potion is half consumed;
+        # a weaker/unknown one waits the full duration * (1 + margin) so it never
+        # drags the fill rate down.  Config cooldowns are only a fallback while
+        # the potion on the belt is unknown.
         "potion_margin_percent": 20,
         # Character class used for potion restore amounts ("" = auto-detect the
         # class from the game each tick; otherwise a fixed class from the list).

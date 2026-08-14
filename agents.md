@@ -65,12 +65,19 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Goals / tasks
 
-- **Done (v1.6.0)**: real potion model (class-dependent restore-over-duration,
-  rejuv instant, no weak-on-strong stacking via duration×margin gating, class
-  auto-detect + override, potion-values table + safety-margin slider on the
-  Triggers tab) and the merc readout fix (fraction-of-max Life at the exact
-  0x8000 full boundary, living-over-corpse hireling pick, UTF-16 name, act-based
-  type, unit-change reset).
+- **Done (v1.7.0)**: grade-aware stacking (same-or-higher grade drinkable once
+  the in-effect potion is half consumed; weaker held for duration×margin; rejuv
+  fixed 1.0s gate; unknown grades conservative), Triggers tab simplified (potion
+  table + class picker removed — class comes from the live character; Safety
+  margin slider kept with a reworded hint), rejuv defaults lowered to 25/25,
+  merc true max read from the stats-list item block (slex+0xA8/count 0xB0; live:
+  base 189 → merged 199) and the bogus UTF-16 name read removed (hireling names
+  are a UI resource string, not in the unit; labelled by type), player max
+  shrink rule (`_track_max`), 95 tests green.  Also from v1.6.0: real potion
+  model (class-dependent restore-over-duration, rejuv instant, no weak-on-strong
+  stacking via duration×margin gating, class auto-detect) and the merc readout
+  fix (fraction-of-max Life at the exact 0x8000 full boundary, living-over-corpse
+  hireling pick, act-based type, unit-change reset).
 - **v1.4.0 Iteration 5 (managed columns + belt refill) — Iteration A landed
   (v1.4.0), Iteration B landed (v1.5.0)**.  Iteration A: the app can manage all 4
   belt columns (Q/W/E/R checkboxes on the Keys tab; unmanaged columns are never
@@ -117,23 +124,7 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Build state
 
-- Version `1.6.0` — **potion model corrected + merc readout fixed**.  The potion
-  tables are now the real class-dependent restore-over-duration model (heal
-  Minor 7.68s/30-45-60 … Super 10.24s/320-480-640; mana all 5.12s/20-30-40 …
-  Super 250-375-500; rejuv instant 35%, full rejuv 100%; 606/611 are the Super
-  grades, NOT "Full=100%").  Class is auto-detected per snapshot (or overridden
-  on the Triggers tab).  The watcher gates each kind on `last potion duration ×
-  safety margin` (default 20%) so a weak potion is never stacked on a strong
-  one (rejuv uses a fixed 1.0s gate); config cooldowns are only a fallback while
-  the belt potion is unknown.  Triggers tab: cooldown sliders removed, replaced
-  with a class dropdown, Safety-margin slider, and a live potion-values table.
-  Merc fix: engine stores merc Life as a fraction of max scaled to [0,0x8000]
-  and full HP is exactly 0x8000 — the old `raw_life < 32768` boundary misread
-  that as a shifted 128/189 (67%) at full health; `<= 32768` now reads it as
-  full and percentages reflect gear.  Plus: living hireling wins over an earlier
-  corpse entry, UTF-16 merc name read at `UNIT_OFFSET_NAME`, act-based merc type
-  map, merc unit-change reset, `raw_life/raw_max_life/unit_id` exposed.
-  Test suite: **90 tests green**; compileall + headless UI smoke pass.
+- Version `1.7.0` — **grade-aware stacking + trimmed Triggers tab + real merc/player maxes**.  Same-or-higher grade potions may be drunk once the in-effect potion is half consumed (`_effective_cooldown(action, candidate_grade)` → `duration*0.5`); weaker/unknown grades wait `duration * potion_margin()`; rejuv uses the fixed 1.0s gate; config cooldowns only fall back while the belt potion is unknown.  `_pick` now returns a `BeltColumn` (or False=skip / None=plain-key fallback) and `_act` does the gating, so `_ready`/`_effective_cooldown` take the candidate grade.  Triggers tab: potion-values table and class dropdown removed (class auto-detected per snapshot), Safety-margin slider kept with a hint that only describes the slider.  Rejuv defaults 40→25 (`rejuv_potion_at_life`/`_mana`).  Merc true max now from the stats-list item block (`STATSLIST_ITEM_STAT_PTR=0xA8`/`COUNT=0xB0`) — live-verified 199/199 at full vs the base 189 — and the UTF-16 name read at `UNIT_OFFSET_NAME=0x2C` is removed (that offset is not a name; hireling names are a UI resource string; merc is labelled by act-based type).  Player max HP/MP uses `_track_max` (shrinks to the base stat when at/over it, grows while damaged).  Test suite: **95 tests green**; compileall + headless UI smoke pass; live probe (pid 25000) confirms merc 199/199 + empty name + player 303/303.
 - Version `1.5.0` (previous). Test suite: 84 tests green (v1.4.0 added `belt_rows_for`,
   `belt_empty_slots`, `solve_grid_mapping`, refill planner tests, config
   refill/managed-column accessors, watcher managed-column gating + last-kind

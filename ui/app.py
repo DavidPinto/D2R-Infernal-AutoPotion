@@ -386,44 +386,17 @@ class MainApp(ctk.CTk):
             frame.pack(fill="x", padx=12, pady=2)
             self._trigger_sliders[key] = frame
 
-        w.heading(body, "Potion values").pack(anchor="w", padx=12, pady=(14, 4))
-        cls_row = ctk.CTkFrame(body, fg_color="transparent")
-        cls_row.pack(fill="x", padx=12, pady=(0, 4))
-        ctk.CTkLabel(cls_row, text="Character class:", font=ctk.CTkFont(size=12)).pack(side="left")
-        self._potion_class_menu = ctk.CTkOptionMenu(
-            cls_row, values=["Auto (detected)"] + list(m.CLASS),
-            width=200, height=28, command=self._on_potion_class)
-        self._potion_class_menu.pack(side="left", padx=(8, 0))
-        w.hint(body, "Restore amounts are class-dependent (see the table below). "
-                     "Pick a class to preview its numbers, or leave on Auto to use "
-                     "the class detected in-game.").pack(anchor="w", padx=12, pady=(0, 4))
-
         frame, _ = w.labeled_slider(
             body, "Safety margin (%)", 0, 100,
             self.config.behavior.get("potion_margin_percent", 20),
             self._on_margin, step=5, fmt="{:.0f}%")
         frame.pack(fill="x", padx=12, pady=2)
         self._margin_slider = frame
-        w.hint(body, "Potions restore over time, not instantly.  The app waits "
-                     "one potion's restore duration + this margin before drinking "
-                     "the same kind again, so a weak potion is never stacked on a "
-                     "strong one (two in a row only average the fill and heal "
-                     "slower).  Rejuvenation is instant.").pack(anchor="w", padx=12, pady=(0, 4))
-
-        monospace = ctk.CTkFont(family="Consolas", size=12)
-        self._potion_table_rows: list = []
-        for kind, title in (("heal", "Healing potions"), ("mana", "Mana potions")):
-            ctk.CTkLabel(body, text=title, font=ctk.CTkFont(size=12, weight="bold")
-                         ).pack(anchor="w", padx=16, pady=(8, 0))
-            header = ctk.CTkLabel(body, text=f"{'potion':<18}{'duration':>10}{'restores':>11}",
-                                  font=monospace, text_color="gray60")
-            header.pack(anchor="w", padx=22)
-            names = m.default_potion_codes().grade_names(kind)
-            for grade, (dur, g0, g1, g2) in enumerate(m.POTION_TABLES[kind]):
-                label = ctk.CTkLabel(body, text="", font=monospace, justify="left", anchor="w")
-                label.pack(anchor="w", padx=22)
-                self._potion_table_rows.append(
-                    (kind, names[grade].capitalize(), dur, g0, g1, g2, label))
+        w.hint(body, "Potions restore over time, not instantly.  A same-or-stronger "
+                     "potion can be drunk again once the one in effect is half "
+                     "consumed; this margin is how long a WEAKER potion is held "
+                     "back after the in-effect potion has finished restoring, so "
+                     "it never drags the fill rate down.  Rejuvenation is instant.").pack(anchor="w", padx=12, pady=(0, 4))
 
         ctk.CTkButton(body, text="Reset to defaults", fg_color="#444",
                       hover_color="#555", command=self._reset_triggers).pack(anchor="w", padx=12, pady=14)
@@ -437,37 +410,12 @@ class MainApp(ctk.CTk):
         self.config.behavior["potion_margin_percent"] = int(round(value))
         self.config.save()
 
-    def _on_potion_class(self, choice):
-        self.config.behavior["potion_class_override"] = "" if choice == "Auto (detected)" else choice
-        self.config.save()
-        self._render_potion_table()
-
-    def _selected_potion_class(self) -> str:
-        """Class used to preview potion amounts: override, else detected, else ''."""
-        override = self.config.potion_class()
-        if override:
-            return override
-        codes = getattr(getattr(self, "reader", None), "codes", None)
-        return getattr(codes, "player_class", "") or ""
-
-    def _render_potion_table(self):
-        cls = self._selected_potion_class()
-        for kind, name, dur, g0, g1, g2, label in self._potion_table_rows:
-            group = m.CLASS_GROUPS.get(kind, {}).get(cls, 1)
-            restore = (g0, g1, g2)[group]
-            label.configure(text=f"{name:<18}{dur:>9.2f}s  restore {restore:>4}")
-
-    def _sync_potion_class_menu(self):
-        self._potion_class_menu.set(self.config.potion_class() or "Auto (detected)")
-
     def _sync_sliders(self):
-        """Push config values into every trigger slider + margin + potion table."""
+        """Push config values into every trigger slider + margin slider."""
         for k, frame in self._trigger_sliders.items():
             frame.set_value(self.config.threshold(k))  # type: ignore[attr-defined]
         self._margin_slider.set_value(  # type: ignore[attr-defined]
             self.config.behavior.get("potion_margin_percent", 20))
-        self._sync_potion_class_menu()
-        self._render_potion_table()
 
     def _reset_triggers(self):
         from d2r.config import DEFAULTS

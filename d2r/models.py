@@ -431,10 +431,6 @@ class BeltColumn:
 UNIT_OFFSET_UNIT_ID = 0x08
 UNIT_OFFSET_TXTFILE = 0x04
 UNIT_OFFSET_UNIT_DATA = 0x10
-# UTF-16LE hireling/monster name pointer.  unit_data is a legacy ASCII/string
-# buffer for most units (read_string gives garbled names), so the wide name is
-# read first and unit_data is only a fallback.
-UNIT_OFFSET_NAME = 0x2C
 UNIT_OFFSET_PATH = 0x38
 UNIT_OFFSET_STATSLISTEX = 0x88
 UNIT_OFFSET_INVENTORY = 0x90
@@ -447,6 +443,11 @@ PATH_OFFSET_Y = 0x06
 
 STATSLIST_STAT_PTR = 0x30
 STATSLIST_STAT_COUNT = 0x38
+# Second stat block on the same stats-list: the merged/item list that carries
+# the true maximums including gear bonuses (the base list only has the un-geared
+# values).  Verified live: merc base MaxLife = 189<<8, item MaxLife = 199<<8.
+STATSLIST_ITEM_STAT_PTR = 0xA8
+STATSLIST_ITEM_STAT_COUNT = 0xB0
 
 # Inventory header field that is non-zero only for the *main* (local) player.
 INV_MAIN_CHECK = 0x30

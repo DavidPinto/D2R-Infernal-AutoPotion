@@ -5,6 +5,43 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-08-14
+
+Grade-aware stacking, smarter triggers UI, and corrected merc/player maxes.
+
+### Changed
+
+- **Same-or-higher grade stacking.** The watcher's derived cooldown is now
+  grade-aware: a potion of the *same or higher* grade may be drunk once the
+  potion in effect is half consumed (keeps the strong potion's fill rate while
+  topping up sooner); a *weaker* potion is still held for the full restore
+  duration × the safety margin so it never drags the fill rate down.  Unknown
+  grades stay conservative.  Rejuv keeps its fixed instant gate.
+- **Triggers tab simplified.** The potion-values table and the character-class
+  picker are removed (the class is read from the live character automatically).
+  The *Safety margin (%)* slider stays, with a hint that only describes what it
+  does — it gates how long a weaker potion is held back after the in-effect
+  potion finishes; it is not "two potions is bad".
+- **Rejuv defaults lowered to critical.** Default rejuv thresholds drop from
+  40/40 to 25/25 (HP ≤ 25 or MP < 25), so rejuv is reserved for the instant
+  save instead of firing on ordinary dips.
+- **Merc max now includes gear.** The merc readout reads the stats-list's second
+  (merged/item) stat block, so a full merc shows its true max (e.g. 199/199)
+  instead of the un-geared base (189/189).  The bogus UTF-16 name read at
+  unit+0x2C is gone (it only ever produced garbage like the Chinese text) — the
+  hireling is labelled by its act-based type (e.g. "Rogue Scout").
+- **Player max can shrink.** Removing a +max HP/MP item no longer reads as
+  damage: the tracked max falls back to the base stat when the player is at/over
+  it, and still only grows while damaged.
+
+### Added
+
+- `GameReader._track_max` (pure shrink/grow rule), stat-list item offsets
+  (`STATSLIST_ITEM_STAT_PTR/COUNT`), and watcher `_last_potion_grade`.
+- Unit tests for the half-duration same/higher gate, the weaker-hold margin,
+  rejuv defaults, the merc merged max, and the player max shrink rule.
+  Test suite: **95 tests green**.
+
 ## [1.6.0] - 2026-08-14
 
 Corrected potion model (class-dependent restore amounts over a duration, no

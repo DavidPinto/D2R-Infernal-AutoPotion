@@ -63,9 +63,11 @@ class PotionWatcher:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_used: dict[str, float] = {}
-        # Restore duration (seconds) of the potion most recently drunk per
-        # action; 0 = unknown (belt unreadable) -> fall back to config cooldown.
+        # Restore duration (seconds) + potion grade of the potion most recently
+        # drunk per action; 0 / -1 = unknown (belt unreadable) -> fall back to
+        # the config cooldown for the gate.
         self._last_potion_dur: dict[str, float] = {}
+        self._last_potion_grade: dict[str, int] = {}
         self._out_of_stock: set[str] = set()   # actions currently reported empty
         self._lock = threading.Lock()
         self._last_snapshot = m.PlayerSnapshot()
@@ -243,13 +245,13 @@ class PotionWatcher:
 
         use_rejuv = (snap.hp_percent <= cfg.threshold("rejuv_potion_at_life")
                      or snap.mana_percent < cfg.threshold("rejuv_potion_at_mana"))
-        if use_rejuv and self._ready("rejuv", t):
+        if use_rejuv:
             self._act("rejuv", "rejuv", max(hp_def, mp_def), max(snap.max_hp, snap.max_mana),
                       f"HP {snap.hp_percent}% / MP {snap.mana_percent}%", snap, t)
         else:
-            if snap.hp_percent <= cfg.threshold("healing_potion_at") and self._ready("heal", t):
+            if snap.hp_percent <= cfg.threshold("healing_potion_at"):
                 self._act("heal", "heal", hp_def, snap.max_hp, f"HP {snap.hp_percent}%", snap, t)
-            if snap.mana_percent <= cfg.threshold("mana_potion_at") and self._ready("mana", t):
+            if snap.mana_percent <= cfg.threshold("mana_potion_at"):
                 self._act("mana", "mana", mp_def, snap.max_mana, f"MP {snap.mana_percent}%", snap, t)
 
     def _smart_tick(self, snap: m.PlayerSnapshot) -> None:
@@ -275,10 +277,8 @@ class PotionWatcher:
                 self._out_of_stock.add(action)
                 self._emit("info", f"No {kind} potion left on the belt.", snap)
         for act in acts:
-            action = act["action"]
-            if self._ready(action, t):
-                self._act(action, act["kind"], act["deficit"], act["max_value"],
-                          act["reason"], snap, t)
+            self._act(act["action"], act["kind"], act["deficit"], act["max_value"],
+                      act["reason"], snap, t)
 
     def _merc_tick(self, snap: m.PlayerSnapshot) -> None:
         """Mercenary decisions (only when one is present and alive)."""
@@ -286,86 +286,100 @@ class PotionWatcher:
         t = time.monotonic()
         if snap.merc_alive:
             m_def = max(0, snap.merc_max_hp - snap.merc_hp)
-            if snap.merc_hp_percent <= cfg.threshold("merc_rejuv_potion_at") and self._ready("merc_rejuv", t):
+            if snap.merc_hp_percent <= cfg.threshold("merc_rejuv_potion_at"):
                 self._act("merc_rejuv", "rejuv", m_def, snap.merc_max_hp,
                           f"Merc HP {snap.merc_hp_percent}%", snap, t)
-            elif snap.merc_hp_percent <= cfg.threshold("merc_healing_potion_at") and self._ready("merc_heal", t):
+            elif snap.merc_hp_percent <= cfg.threshold("merc_healing_potion_at"):
                 self._act("merc_heal", "heal", m_def, snap.merc_max_hp,
                           f"Merc HP {snap.merc_hp_percent}%", snap, t)
 
     def _pick(self, kind: str, deficit: int, max_value: int,
-              action: str, snap: m.PlayerSnapshot) -> tuple[int | None, bool]:
+              action: str, snap: m.PlayerSnapshot) -> m.BeltColumn | None | bool:
         """Choose the belt column to drink from.
 
-        Returns (column_index, skip).  skip=True when the belt is known to have
-        no usable potion of ``kind`` in the bound columns (the key is NOT pressed
-        rather than waste a mismatched potion).  column_index is None when the
-        belt content is unreadable, meaning the caller falls back to the plain
-        configured key."""
+        Returns the BeltColumn to drink, False when the belt is known to have no
+        usable potion of ``kind`` in the bound columns (the key is NOT pressed
+        rather than waste a mismatched potion), or None when the belt content is
+        unreadable (the caller falls back to the plain configured key)."""
         pc = snap.potion_counts
         if not pc.ok:
-            return None, False
+            return None
         # Only columns the user lets the app manage (and that are bound).
         allowed = tuple(
             k for k in m.BELT_COLUMN_KEYS
             if k in self.config.keys_for(action) and k in self.config.managed_columns())
         idx = pc.choose_belt_column(kind, deficit, max_value, allowed_keys=allowed)
         if idx is None:
-            return None, True
-        return idx, False
+            return False
+        return next((c for c in pc.columns if c.index == idx), False)
 
     def _act(self, action: str, kind: str, deficit: int, max_value: int,
              reason: str, snap: m.PlayerSnapshot, t: float) -> None:
         """Grade-aware drink for one action: pick a column (or skip if the belt
-        has no potion of the needed kind), then press that column's key."""
-        col, skip = self._pick(kind, deficit, max_value, action, snap)
-        if skip:
+        has no potion of the needed kind), apply the grade-aware gate, then press
+        that column's key."""
+        col = self._pick(kind, deficit, max_value, action, snap)
+        if col is False:
             if action not in self._out_of_stock:
                 self._out_of_stock.add(action)
                 self._emit("info", f"No {kind} potion left on the belt.", snap)
             return
+        grade = col.grade if isinstance(col, m.BeltColumn) else -1
+        if not self._ready(action, t, candidate_grade=grade):
+            return
         self._out_of_stock.discard(action)
         self._use(action, reason, snap, column=col)
 
-    def _ready(self, action: str, now: float) -> bool:
-        """True once this action's cooldown has elapsed since its last press."""
-        return now - self._last_used.get(action, 0.0) >= self._effective_cooldown(action)
+    def _ready(self, action: str, now: float, candidate_grade: int = -1) -> bool:
+        """True once this action's cooldown has elapsed since its last press.
 
-    def _effective_cooldown(self, action: str) -> float:
+        ``candidate_grade`` is the grade of the potion about to be drunk; a
+        same-or-higher grade unlocks after half the in-effect potion's duration,
+        a weaker one only after the full duration x margin (see
+        :meth:`_effective_cooldown`)."""
+        return now - self._last_used.get(action, 0.0) >= self._effective_cooldown(action, candidate_grade)
+
+    def _effective_cooldown(self, action: str, candidate_grade: int = -1) -> float:
         """Seconds before the same potion action may fire again.
 
-        Potions restore over a duration, so repeating before that duration (+ a
-        safety margin) passes would average the fill over the total time -
-        slower than the strong potion alone.  Therefore the cooldown is derived
-        from the potion actually drunk: duration x margin.  Rejuv is instant and
-        uses a short fixed gate.  Config cooldowns are the fallback while the
-        potion on the belt is unknown (plain tier / unreadable belt)."""
+        Potions restore over a duration.  A potion of the same or higher grade
+        may be drunk once the in-effect potion is half consumed (keeps the strong
+        potion's fill rate while topping up sooner); a weaker or unknown-grade
+        potion waits the full duration x margin so it never drags the fill rate
+        down.  Rejuv is instant and uses a short fixed gate.  Config cooldowns
+        are the fallback while the potion on the belt is unknown."""
         if action in ("rejuv", "merc_rejuv"):
             return _REJUV_COOLDOWN
         duration = self._last_potion_dur.get(action, 0.0)
         if duration > 0:
+            last_grade = self._last_potion_grade.get(action, -1)
+            if candidate_grade >= 0 and last_grade >= 0 and candidate_grade >= last_grade:
+                return duration * 0.5
             return duration * self.config.potion_margin()
         return self.config.cooldown(action)
 
     def _use(self, action: str, reason: str, snap: m.PlayerSnapshot,
-             column: int | None = None) -> None:
+             column: m.BeltColumn | None = None) -> None:
         """Press the key for 'action' (a specific belt column when given) and log
         the outcome (success or UIPI-block)."""
-        key = m.BELT_COLUMN_KEYS[column] if column is not None else None
+        key = m.BELT_COLUMN_KEYS[column.index] if column is not None else None
         ok = self.sender.press(action, key=key)
         now = time.monotonic()
         self._last_used[action] = now
         self._last_kind = _ACTION_KIND.get(action, "")
         if ok:
-            # Remember the drunk potion's restore duration so the derived
-            # cooldown (duration x margin) can prevent weak-on-strong stacking.
+            # Remember the drunk potion's restore duration + grade so the derived
+            # cooldown can gate repeats: same/higher after half the duration,
+            # weaker only after the full duration x margin.
             duration = 0.0
+            grade = -1
             if column is not None and snap.potion_counts.ok:
-                col = next((c for c in snap.potion_counts.columns if c.index == column), None)
                 codes = getattr(self.reader, "codes", None)
-                if col is not None and col.txt and codes is not None:
-                    duration = codes.duration(col.txt)
+                if column.txt and codes is not None:
+                    duration = codes.duration(column.txt)
+                    grade = column.grade
             self._last_potion_dur[action] = duration
+            self._last_potion_grade[action] = grade
             with self._lock:
                 self._potion_uses += 1
                 self._counts[action] = self._counts.get(action, 0) + 1
