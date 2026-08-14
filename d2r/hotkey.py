@@ -59,6 +59,71 @@ kernel32.GetModuleHandleW.argtypes = [wt.LPCWSTR]
 
 _MOD_BY_NAME = {"CTRL": MOD_CONTROL, "ALT": MOD_ALT, "SHIFT": MOD_SHIFT, "WIN": MOD_WIN}
 
+# Order used when formatting a captured combo ("Ctrl+Alt+F12").
+MOD_ORDER = ("Ctrl", "Alt", "Shift", "Win")
+
+# Tk keysyms that report a modifier key.
+_MOD_KEYSYMS = {
+    "control", "control_l", "control_r",
+    "alt", "alt_l", "alt_r",
+    "shift", "shift_l", "shift_r",
+    "super", "super_l", "super_r", "meta_l", "meta_r", "win_l", "win_r",
+}
+
+# Tk keysym -> friendly key name (friendly names come from d2r/keys.VK).
+_KEYSYM_TO_NAME = {
+    "space": "SPACE", "return": "ENTER", "escape": "ESC", "backspace": "BACKSPACE",
+    "tab": "TAB", "insert": "INSERT", "delete": "DELETE",
+    "home": "HOME", "end": "END", "prior": "PAGEUP", "next": "PAGEDOWN",
+    "left": "LEFT", "right": "RIGHT", "up": "UP", "down": "DOWN",
+}
+
+
+def mod_from_keysym(keysym: str) -> Optional[str]:
+    """Modifier name ('Ctrl'|'Alt'|'Shift'|'Win') for a Tk keysym, else None."""
+    low = str(keysym).lower()
+    if low not in _MOD_KEYSYMS:
+        return None
+    if low.startswith("control"):
+        return "Ctrl"
+    if low.startswith("alt"):
+        return "Alt"
+    if low.startswith("shift"):
+        return "Shift"
+    return "Win"
+
+
+def keysym_to_key_name(keysym: str) -> Optional[str]:
+    """Map a Tk keysym to a d2r/keys.VK name, or None if unsupported."""
+    low = str(keysym).lower()
+    if low in _KEYSYM_TO_NAME:
+        return _KEYSYM_TO_NAME[low]
+    if low.startswith("kp_"):
+        kp = low[3:]
+        if kp.isdigit():
+            return "NUMPAD" + kp
+    if len(low) == 1 and low.isalpha():
+        return low.upper()
+    if len(low) == 1 and low.isdigit():
+        return low
+    if low.startswith("f") and low[1:].isdigit():
+        return low.upper()
+    return None
+
+
+def spec_for(keysym: str, held_mods: frozenset = frozenset()) -> Optional[str]:
+    """Build a 'Ctrl+Alt+F12' style spec from a captured keysym + held modifiers.
+
+    Returns None when the keysym is itself a modifier or is unsupported."""
+    if mod_from_keysym(keysym):
+        return None
+    name = keysym_to_key_name(keysym)
+    if name is None:
+        return None
+    parts = [mod for mod in MOD_ORDER if mod in held_mods]
+    parts.append(name)
+    return "+".join(parts)
+
 
 def parse_hotkey(spec: str) -> Optional[tuple[int, int]]:
     """Parse 'Ctrl+Alt+F12' into (modifiers, virtual-key).  None if invalid.

@@ -22,7 +22,8 @@ from d2r.reader import GameReader
 from d2r.watcher import PotionWatcher
 from d2r.keys import vk_name
 from d2r.log import EventLog
-from d2r.hotkey import HotkeyListener, parse_hotkey
+from d2r.hotkey import HotkeyListener, parse_hotkey, spec_for
+from d2r.hotkey import mod_from_keysym as hotkey_mod_from_keysym
 from ui import widgets as w
 
 ACCENT = "#2f80ed"
@@ -110,6 +111,29 @@ class MainApp(ctk.CTk):
                                         command=self._toggle_enabled)
         self._sync_enable_button()
         self.enable_btn.pack(side="right", padx=(0, 6))
+
+        self._build_quickbar()
+
+    def _build_quickbar(self):
+        """Persistent profile strip: profile save/load/delete on every tab."""
+        qbar = ctk.CTkFrame(self, fg_color="#191919", corner_radius=8)
+        qbar.pack(fill="x", padx=10, pady=(0, 8))
+        ctk.CTkLabel(qbar, text="⚡", font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=(10, 6))
+        ctk.CTkLabel(qbar, text="Profile:", font=ctk.CTkFont(size=11, weight="bold")).pack(side="left")
+        self._profile_entry = ctk.CTkEntry(qbar, width=120, height=26,
+                                           placeholder_text="new name")
+        self._profile_entry.pack(side="left", padx=(4, 4))
+        self._profile_menu = ctk.CTkOptionMenu(qbar, values=[""], width=150, height=26)
+        self._profile_menu.set("")
+        self._profile_menu.pack(side="left", padx=(4, 0))
+        ctk.CTkButton(qbar, text="Save", width=52, height=26,
+                      command=self._save_profile).pack(side="left", padx=(4, 0))
+        ctk.CTkButton(qbar, text="Load", width=52, height=26,
+                      command=self._load_profile).pack(side="left", padx=(4, 0))
+        ctk.CTkButton(qbar, text="Delete", width=62, height=26,
+                      fg_color="#7a4a4a", hover_color="#8c5555",
+                      command=self._delete_profile).pack(side="left", padx=(4, 0))
+        self._refresh_profile_menu()
 
     def _set_status(self, text: str, color: str):
         # Always marshal widget updates to the main thread (called from threads).
@@ -283,7 +307,21 @@ class MainApp(ctk.CTk):
         scroll.pack(fill="both", expand=True, padx=4, pady=4)
         body = scroll
 
-        w.heading(body, "Trigger thresholds (%)").pack(anchor="w", padx=12, pady=(10, 4))
+        # --- one-click presets (top of the tab) --------------------------------
+        w.heading(body, "Presets").pack(anchor="w", padx=12, pady=(10, 4))
+        p_row = ctk.CTkFrame(body, fg_color="transparent")
+        p_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
+        preset_names = list(PRESETS.keys())
+        self._preset_menu = ctk.CTkOptionMenu(p_row, values=preset_names,
+                                              width=180, height=28)
+        self._preset_menu.set(preset_names[0] if preset_names else "")
+        self._preset_menu.pack(side="left")
+        ctk.CTkButton(p_row, text="Apply preset", width=110, height=28,
+                      command=self._apply_preset).pack(side="left", padx=(8, 0))
+        w.hint(body, "Presets set trigger thresholds/cooldowns only - keys, potion "
+                     "supply and manual maxes are untouched.").pack(anchor="w", padx=12, pady=(0, 8))
+
+        w.heading(body, "Trigger thresholds (%)").pack(anchor="w", padx=12, pady=(4, 4))
         self._trigger_sliders: dict[str, object] = {}
         for key, label in (("healing_potion_at", "Health potion at HP ≤"),
                            ("mana_potion_at", "Mana potion at MP ≤"),
@@ -310,42 +348,6 @@ class MainApp(ctk.CTk):
 
         ctk.CTkButton(body, text="Reset to defaults", fg_color="#444",
                       hover_color="#555", command=self._reset_triggers).pack(anchor="w", padx=12, pady=14)
-
-        # --- one-click presets -----------------------------------------------
-        w.heading(body, "Presets").pack(anchor="w", padx=12, pady=(4, 2))
-        p_row = ctk.CTkFrame(body, fg_color="transparent")
-        p_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
-        preset_names = list(PRESETS.keys())
-        self._preset_menu = ctk.CTkOptionMenu(p_row, values=preset_names,
-                                              width=180, height=28)
-        self._preset_menu.set(preset_names[0] if preset_names else "")
-        self._preset_menu.pack(side="left")
-        ctk.CTkButton(p_row, text="Apply preset", width=110, height=28,
-                      command=self._apply_preset).pack(side="left", padx=(8, 0))
-        w.hint(body, "Presets set trigger thresholds/cooldowns only - keys, potion "
-                     "supply and manual maxes are untouched.").pack(anchor="w", padx=12, pady=(0, 8))
-
-        # --- named profiles ----------------------------------------------------
-        w.heading(body, "Profiles").pack(anchor="w", padx=12, pady=(4, 2))
-        prof_row = ctk.CTkFrame(body, fg_color="transparent")
-        prof_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
-        self._profile_entry = ctk.CTkEntry(prof_row, width=160, height=28,
-                                           placeholder_text="profile name")
-        self._profile_entry.pack(side="left")
-        ctk.CTkButton(prof_row, text="Save", width=64, height=28,
-                      command=self._save_profile).pack(side="left", padx=(6, 0))
-        self._profile_menu = ctk.CTkOptionMenu(prof_row, values=[""], width=180, height=28)
-        self._profile_menu.set("")
-        self._profile_menu.pack(side="left", padx=(6, 0))
-        ctk.CTkButton(prof_row, text="Load", width=64, height=28,
-                      command=self._load_profile).pack(side="left", padx=(6, 0))
-        ctk.CTkButton(prof_row, text="Delete", width=64, height=28,
-                      fg_color="#7a4a4a", hover_color="#8c5555",
-                      command=self._delete_profile).pack(side="left", padx=(6, 0))
-        w.hint(body, "A profile stores every setting (thresholds, cooldowns, keys, "
-                     "manual maxes) under a name so you can switch characters/builds "
-                     "in one click.").pack(anchor="w", padx=12, pady=(0, 10))
-        self._refresh_profile_menu()
 
     def _on_threshold(self, key, value):
         self.config.thresholds[key] = int(round(value))
@@ -459,19 +461,26 @@ class MainApp(ctk.CTk):
             lambda v: self._on_poll_interval(v), step=50, fmt="{:.0f} ms")
         self._poll_frame.pack(fill="x", padx=12, pady=(8, 2))
 
-        # Global arm/disarm hotkey.
+        # Global arm/disarm hotkey (preset quick-pick + custom capture).
         hot = ctk.CTkFrame(parent, fg_color="transparent")
         hot.pack(anchor="w", padx=12, pady=(8, 0), fill="x")
         ctk.CTkLabel(hot, text="Global arm/disarm hotkey",
                      font=ctk.CTkFont(size=12)).pack(side="left")
-        self._hotkey_menu = ctk.CTkOptionMenu(hot, values=HOTKEY_PRESETS, width=160, height=28)
-        self._hotkey_menu.pack(side="left", padx=(10, 0))
+        self._hotkey_preset = ctk.CTkOptionMenu(hot, values=HOTKEY_PRESETS, width=150, height=28)
+        self._hotkey_preset.pack(side="left", padx=(10, 0))
+        self._hotkey_preset.set(self.config.behavior.get("toggle_hotkey", "")
+                                or "Disabled")
+        self._hotkey_preset.configure(command=self._on_hotkey)
+        self._hotkey_bind_btn = ctk.CTkButton(hot, text="Bind custom…", width=100, height=28,
+                                              command=self._start_hotkey_capture)
+        self._hotkey_bind_btn.pack(side="left", padx=(6, 0))
+        self._hotkey_off_btn = ctk.CTkButton(hot, text="Off", width=44, height=28,
+                                             fg_color="#7a4a4a", hover_color="#8c5555",
+                                             command=self._disable_hotkey)
+        self._hotkey_off_btn.pack(side="left", padx=(6, 0))
         self._hotkey_state = ctk.CTkLabel(hot, text="", font=ctk.CTkFont(size=11),
                                           text_color=GOOD)
         self._hotkey_state.pack(side="left", padx=(8, 0))
-        self._hotkey_menu.set(self.config.behavior.get("toggle_hotkey", "")
-                              or "Disabled")
-        self._hotkey_menu.configure(command=self._on_hotkey)
         self._hotkey_state.bind("<Button-1>", lambda e: self._refresh_hotkey())
 
         ctk.CTkButton(parent, text="Reset to defaults", fg_color="#444",
@@ -547,21 +556,66 @@ class MainApp(ctk.CTk):
         self.config.save()
         self._refresh_hotkey()
 
+    def _disable_hotkey(self):
+        """Turn the global hotkey off entirely."""
+        self._on_hotkey("Disabled")
+
+    def _start_hotkey_capture(self):
+        """Click-to-bind a custom combo: track held modifiers until a key lands."""
+        if self._capturing:
+            return
+        self._capturing = "hotkey"
+        self._held_mods: set[str] = set()
+        self._hotkey_bind_btn.configure(text="Press combo…")
+        self.focus_force()
+        self.bind("<KeyPress>", self._on_hotkey_capture_key)
+        self.bind("<KeyRelease>", self._on_hotkey_capture_release)
+
+    def _on_hotkey_capture_release(self, event):
+        mod = hotkey_mod_from_keysym(getattr(event, "keysym", ""))
+        if mod:
+            self._held_mods.discard(mod)
+
+    def _on_hotkey_capture_key(self, event):
+        """Finish a hotkey capture: build 'Ctrl+Alt+F12' from held modifiers."""
+        if self._capturing != "hotkey":
+            return
+        keysym = getattr(event, "keysym", "")
+        mod = hotkey_mod_from_keysym(keysym)
+        if mod:
+            self._held_mods.add(mod)
+            return
+        self.unbind("<KeyPress>")
+        self.unbind("<KeyRelease>")
+        self._capturing = None
+        self._hotkey_bind_btn.configure(text="Bind custom…")
+        spec = spec_for(keysym, frozenset(self._held_mods))
+        if not spec:
+            self._hotkey_state.configure(text="unsupported key", text_color=DANGER)
+            return
+        self.config.behavior["toggle_hotkey"] = spec
+        self.config.save()
+        self._emit_log(f"Global hotkey set to {spec}.", "info")
+        self._refresh_hotkey()
+
     def _refresh_hotkey(self):
         """(Re)register the global arm/disarm hotkey from config."""
         spec = self.config.behavior.get("toggle_hotkey", "")
         self.hotkey = None
         parsed = parse_hotkey(spec)
         if not parsed:
-            self._hotkey_state.configure(text="off" if not spec else "invalid",
-                                         text_color="gray60")
+            label = "off" if not spec else f"{spec} (invalid)"
+            self._hotkey_state.configure(text=label, text_color="gray60")
+            self._hotkey_preset.set(spec if spec in HOTKEY_PRESETS
+                                    else ("Disabled" if not spec else "Custom…"))
             return
         mods, vk = parsed
         listener = HotkeyListener(mods, vk, self._hotkey_toggle)
         ok = listener.start()
         if ok:
             self.hotkey = listener
-            self._hotkey_state.configure(text="registered", text_color=GOOD)
+            self._hotkey_state.configure(text=f"{spec} (registered)", text_color=GOOD)
+            self._hotkey_preset.set(spec if spec in HOTKEY_PRESETS else "Custom…")
             self._emit_log(f"Global hotkey {spec} registered.", "info")
         else:
             self._hotkey_state.configure(text="failed (in use?)", text_color=DANGER)
@@ -582,7 +636,7 @@ class MainApp(ctk.CTk):
         self._sound_switch.select() if self.config.behavior.get("sound", True) else self._sound_switch.deselect()
         self._pause_switch.select() if self.config.behavior.get("pause_when_menus_open", True) else self._pause_switch.deselect()
         self._poll_frame.set_value(float(self.config.behavior.get("poll_interval_ms", 150)))
-        self._hotkey_menu.set(self.config.behavior.get("toggle_hotkey", "") or "Disabled")
+        self._hotkey_preset.set(self.config.behavior.get("toggle_hotkey", "") or "Disabled")
         self.config.save()
         self._refresh_hotkey()
 

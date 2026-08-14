@@ -1,0 +1,58 @@
+# agents.md — D2R Infernal Auto Potion
+
+Agentic-AI working notes. Keep this file short and current: update the *Goals* and
+*Build state* sections as the project moves. This is the contract for how work is done here.
+
+## Project
+
+Python belt-potion automation for Diablo II Resurrected (Infernal Edition). Watches
+HP/Mana/Merc in game memory, presses belt keys via `SendInput`. **stdlib + customtkinter
+only** — no new third-party deps without asking. Ported from
+[Hefero/D2R-AutoPotion-Go](https://github.com/Hefero/D2R-AutoPotion-Go).
+
+## Commands
+
+```pwsh
+python main.py               # run the UI
+python main.py --version
+python -m unittest discover -s tests   # test suite (stdlib unittest, no game needed)
+python -m compileall -q main.py d2r ui tests
+git add -A && git commit -m "..."      # commit after EVERY completed iteration
+```
+
+## Conventions
+
+- No code comments unless they explain a non-obvious "why" (offsets, ctypes quirks, engine
+  behavior). Keep them short.
+- Version lives only in `d2r/version.py`. Bump + CHANGELOG.md + README.md on release.
+- Config accessors must fall back to safe defaults; nothing may raise a KeyError on bad data.
+- Cross-thread UI work MUST go through `widget.after(0, ...)` and be guarded; a UI hiccup
+  must never kill the watcher thread.
+- Win32 calls via ctypes need explicit `argtypes`/`restype` (64-bit LPARAM truncation bug).
+- Watcher decision logic is pure — unit-test it with a fake reader/sender, never SendInput.
+- Persisted config stores profiles; built-in presets are code constants, not disk.
+
+## Best practices for agents
+
+- **Verify live when safe**: the game is often running. Read-only probes (`GameReader`,
+  `diagnose()`, belt/merc reads) are safe. NEVER send keys or enable the watcher during dev.
+- **Probe before guessing offsets** (belt columns, merc fields). Write a throwaway script
+  under `%TEMP%\opencode` if needed. Confirm txtFileNo/item struct fields against the live game.
+- **One iteration = one commit.** Make a change, add/adjust tests, run the suite, commit.
+- **Test the pure logic**, not the OS. UI builds are smoke-tested headless (construct +
+  `after`-destroy), never driven.
+- Preserve behavior/format of the existing tool; evolve, don't rewrite without asking.
+
+## Goals / tasks
+
+- **v1.2.0 in progress** (next release).
+  1. UI: user-customizable global hotkey (capture-style binding, not preset list).
+  2. UI: presets moved to the top of the Triggers tab.
+  3. UI: profile save/load always accessible (persistent strip, any tab).
+  4. Merc: running observed max so merc HP% accounts for gear (mirrors player logic).
+  5. Merc: show name / type / level like the player block.
+  6. Mechanics: use the 4th belt column/hotkey (new binding + action).
+  7. Mechanics: grade-aware potion choice (belt holds per-column grades; pick the
+     smallest that covers the deficit).
+- **Done**: v1.0.0 baseline, v1.1.0 potion monitoring / profiles / presets / event log /
+  session stats / global hotkey (landed 2026-08-14).

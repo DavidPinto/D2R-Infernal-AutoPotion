@@ -226,6 +226,45 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(w.counts()["heal"], 1)
 
 
+class HotkeyTests(unittest.TestCase):
+    def test_parse_hotkey(self):
+        from d2r.hotkey import parse_hotkey
+        self.assertEqual(parse_hotkey("Ctrl+Alt+F12"), (3, 0x7B))
+        self.assertEqual(parse_hotkey("Ctrl+Shift+E"), (6, 0x45))
+        self.assertEqual(parse_hotkey("WIN+1"), (8, 0x31))
+        self.assertEqual(parse_hotkey(""), None)
+        self.assertEqual(parse_hotkey("F12"), None)          # needs a modifier
+        self.assertEqual(parse_hotkey("Ctrl+Bogus+X"), None)  # unknown modifier
+        self.assertEqual(parse_hotkey("Ctrl+NOTAKEY"), None)  # unknown key
+
+    def test_mod_from_keysym(self):
+        from d2r.hotkey import mod_from_keysym
+        self.assertEqual(mod_from_keysym("Control_L"), "Ctrl")
+        self.assertEqual(mod_from_keysym("Alt_R"), "Alt")
+        self.assertEqual(mod_from_keysym("shift"), "Shift")
+        self.assertEqual(mod_from_keysym("Super_L"), "Win")
+        self.assertEqual(mod_from_keysym("f"), None)
+        self.assertEqual(mod_from_keysym(""), None)
+
+    def test_keysym_to_key_name(self):
+        from d2r.hotkey import keysym_to_key_name
+        self.assertEqual(keysym_to_key_name("F12"), "F12")
+        self.assertEqual(keysym_to_key_name("a"), "A")
+        self.assertEqual(keysym_to_key_name("5"), "5")
+        self.assertEqual(keysym_to_key_name("space"), "SPACE")
+        self.assertEqual(keysym_to_key_name("Prior"), "PAGEUP")
+        self.assertEqual(keysym_to_key_name("KP_1"), "NUMPAD1")
+        self.assertEqual(keysym_to_key_name("Control_L"), None)
+
+    def test_spec_for(self):
+        from d2r.hotkey import spec_for
+        self.assertEqual(spec_for("F12", frozenset({"Ctrl", "Alt"})), "Ctrl+Alt+F12")
+        self.assertEqual(spec_for("f9", frozenset({"Ctrl"})), "Ctrl+F9")
+        self.assertEqual(spec_for("E", frozenset()), "E")
+        self.assertEqual(spec_for("Control_L", frozenset({"Ctrl"})), None)  # modifier alone
+        self.assertEqual(spec_for("unknown_keysym", frozenset()), None)
+
+
 class LogTests(unittest.TestCase):
     def _tmp_path(self):
         return os.path.join(tempfile.mkdtemp(prefix="d2rap-log-"), "test.log")
