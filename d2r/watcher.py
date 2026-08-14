@@ -23,8 +23,11 @@ import time
 from typing import Callable, Optional
 
 from . import models as m
+from . import refill as refill_mod
+from . import input as input_mod
 from .config import AppConfig
 from .keys import KeySender
+from .process import find_window_for_pid
 from .reader import GameReader
 
 ACTION_LABELS = {
@@ -33,6 +36,12 @@ ACTION_LABELS = {
     "rejuv": "Rejuvenation potion",
     "merc_heal": "Merc health potion",
     "merc_rejuv": "Merc rejuv potion",
+}
+
+# Potion family a drink action consumes (for refill restocking preference).
+_ACTION_KIND = {
+    "heal": "heal", "mana": "mana", "rejuv": "rejuv",
+    "merc_heal": "heal", "merc_rejuv": "rejuv",
 }
 
 
@@ -55,6 +64,11 @@ class PotionWatcher:
         self._lock = threading.Lock()
         self._last_snapshot = m.PlayerSnapshot()
         self._potion_uses = 0
+        # Belt refill state: last consumed family (restock preference), tick
+        # timestamp for the click throttle, and one-shot warnings.
+        self._last_kind: str = ""
+        self._refill_last = 0.0
+        self._warned: set[str] = set()
 
         # Session metrics (per-action counts, error count, first-tick timestamp).
         self._counts: dict[str, int] = {k: 0 for k in ACTION_LABELS}
@@ -170,6 +184,9 @@ class PotionWatcher:
                 if self._should_act(snap):
                     self._tick(snap)
 
+                if snap.in_game:
+                    self._refill_if_open(snap)
+
                 elapsed = time.monotonic() - started
                 if elapsed < interval:
                     self._stop.wait(interval - elapsed)
@@ -236,7 +253,10 @@ class PotionWatcher:
         pc = snap.potion_counts
         if not pc.ok:
             return None, False
-        allowed = tuple(k for k in m.BELT_COLUMN_KEYS if k in self.config.keys_for(action))
+        # Only columns the user lets the app manage (and that are bound).
+        allowed = tuple(
+            k for k in m.BELT_COLUMN_KEYS
+            if k in self.config.keys_for(action) and k in self.config.managed_columns())
         idx = pc.choose_belt_column(kind, deficit, max_value, allowed_keys=allowed)
         if idx is None:
             return None, True
@@ -267,6 +287,7 @@ class PotionWatcher:
         ok = self.sender.press(action, key=key)
         now = time.monotonic()
         self._last_used[action] = now
+        self._last_kind = _ACTION_KIND.get(action, "")
         if ok:
             with self._lock:
                 self._potion_uses += 1
@@ -275,3 +296,63 @@ class PotionWatcher:
             self._emit(action, f"{ACTION_LABELS[action]} ({reason})", snap)
         else:
             self._emit("error", f"Key send FAILED for {ACTION_LABELS[action]} (check game is not running as admin / tool is not blocked).", snap)
+
+    # ------------------------------------------------------------- refill
+    def _warn_once(self, key: str, message: str, snap: m.PlayerSnapshot) -> None:
+        if key not in self._warned:
+            self._warned.add(key)
+            self._emit("info", message, snap)
+
+    def _refill_if_open(self, snap: m.PlayerSnapshot) -> None:
+        """Dumb-tier belt refill: while the inventory panel is open, click one
+        matching inventory potion per interval into the first empty managed belt
+        slot.  Only runs when the game window is foreground so the click lands
+        on the game, never on another app."""
+        cfg = self.config
+        if not cfg.refill_enabled():
+            return
+        if not snap.in_game or "Inventory" not in snap.open_menu_names:
+            return
+        mapping = cfg.refill_mapping()
+        if not mapping.get("calibrated"):
+            self._warn_once(
+                "refill-not-calibrated",
+                "Belt refill is enabled but click positions are not calibrated "
+                "(Keys tab > Belt refill > Calibrate).", snap)
+            return
+        now = time.monotonic()
+        if now - self._refill_last < cfg.refill_interval():
+            return
+        proc = getattr(self.reader, "proc", None)
+        if proc is None or not proc.pid:
+            return
+        if not input_mod.game_foreground(proc.pid):
+            return
+        hwnd = find_window_for_pid(proc.pid)
+        if not hwnd:
+            return
+        pc = snap.potion_counts
+        if not pc.ok:
+            return
+        managed = cfg.managed_indices()
+        empty = [x for x in pc.belt_empty if (x % len(m.BELT_COLUMN_KEYS)) in managed]
+        if not empty:
+            return
+        plan = refill_mod.plan_refills(empty, self.reader.inventory_potions(),
+                                       last_kind=self._last_kind or None)
+        if not plan:
+            return
+        choice = plan[0]
+        potion = choice["potion"]
+        rect = input_mod.window_rect(hwnd)
+        if not rect:
+            return
+        cell = float(mapping.get("cell", 29.0))
+        sx = rect[0] + float(mapping["origin_x"]) + (float(potion["x"]) + 0.5) * cell
+        sy = rect[1] + float(mapping["origin_y"]) + (float(potion["y"]) + 0.5) * cell
+        ok = input_mod.click_at(sx, sy)
+        self._refill_last = now
+        if ok:
+            self._emit("info", f"Refill: clicked a {potion['kind']} potion to the belt.", snap)
+        else:
+            self._emit("error", "Belt refill click failed (SendInput blocked or window lost focus).", snap)

@@ -267,6 +267,67 @@ def infer_potion_family(kind: str, anchor_txt: int, anchor_grade: int,
     return out
 
 
+# Belt txtFileNo -> number of belt rows (4 columns x 1..4 rows).  Classic D2R
+# ids plus the Infernal +15 renumber for the same belts (the equipped Light Belt
+# in this build kept its classic id 345, so both sets are accepted).
+BELT_ROWS_BY_TXTFILE: dict[int, int] = {
+    # 2 rows: Sash / Light Belt / Demonhide Sash / Sharkskin Belt / Spiderweb / Vampirefang
+    344: 2, 345: 2, 390: 2, 391: 2, 460: 2, 461: 2,
+    # 3 rows: Belt / Heavy Belt / Mesh Belt / Battle Belt / Mithril Coil / Troll Belt
+    346: 3, 347: 3, 392: 3, 393: 3, 462: 3, 463: 3,
+    # 4 rows: Plated Belt / War Belt / Colossus Girdle
+    348: 4, 394: 4, 464: 4,
+    # Infernal +15 renumber guesses (unused ids are harmless).
+    359: 2, 360: 2, 405: 2, 406: 2, 475: 2, 476: 2,
+    361: 3, 362: 3, 407: 3, 408: 3, 477: 3, 478: 3,
+    363: 4, 409: 4, 479: 4,
+}
+
+
+def belt_rows_for(txt: int) -> int | None:
+    """Rows (1..4) for an equipped belt's txtFileNo, or None when unknown."""
+    return BELT_ROWS_BY_TXTFILE.get(txt)
+
+
+def belt_empty_slots(belt_rows: int, filled: list) -> list[int]:
+    """Belt slot indices (X) with no potion, for a belt of ``belt_rows`` rows.
+
+    The belt grid is 4 columns wide; slot X = row * 4 + column.  Only slots that
+    exist on this belt (0 .. rows*4-1) are considered."""
+    total = max(1, int(belt_rows)) * 4
+    have = set(int(x) for x in filled)
+    return [x for x in range(total) if x not in have]
+
+
+def solve_grid_mapping(samples, cell: float | None = None) -> tuple[float, float, float] | None:
+    """Solve the screen mapping ``screen = origin + grid * cell`` for a click grid.
+
+    ``samples`` are ``(grid_x, grid_y, screen_x, screen_y)`` tuples captured while
+    the mouse hovered over a known grid cell (grid coords come from the item
+    struct, screen coords from the cursor).  When ``cell`` is known (a previous
+    calibration) a single sample solves the origin; otherwise at least two samples
+    on *different* grid cells are needed to solve cell size + origin by
+    least squares.  Returns ``(cell, origin_x, origin_y)`` or None."""
+    if not samples or (cell is None and len(samples) < 2):
+        return None
+    sx = [float(s[2]) for s in samples]
+    sy = [float(s[3]) for s in samples]
+    gx = [float(s[0]) for s in samples]
+    gy = [float(s[1]) for s in samples]
+    if cell is None:
+        mx, my = sum(gx) / len(gx), sum(gy) / len(gy)
+        num = sum(sx[i] * (gx[i] - mx) + sy[i] * (gy[i] - my) for i in range(len(samples)))
+        den = sum((gx[i] - mx) ** 2 + (gy[i] - my) ** 2 for i in range(len(samples)))
+        if den <= 0:
+            return None
+        cell = num / den
+    if cell <= 0:
+        return None
+    ox = sum(sx[i] - gx[i] * cell for i in range(len(samples))) / len(samples)
+    oy = sum(sy[i] - gy[i] * cell for i in range(len(samples))) / len(samples)
+    return cell, ox, oy
+
+
 def potion_entries_from_lists(rows) -> list[PotionEntry]:
     """Build PotionEntry objects from persisted [[txt, kind, grade], ...] rows.
     Invalid rows are dropped; later rows override earlier ones for a txt."""
@@ -383,6 +444,11 @@ class PotionCounts:
     columns: list = field(default_factory=lambda: [
         BeltColumn(key=k, index=i) for i, k in enumerate(BELT_COLUMN_KEYS)])
     ok: bool = False
+    # Belt refill bookkeeping: how many rows the equipped belt has, which slot
+    # X values hold a potion, and which are free (computed by the reader).
+    belt_rows: int = 1
+    belt_filled: list = field(default_factory=list)
+    belt_empty: list = field(default_factory=list)
     # PotionCodes used for grade/restore decisions (set by the reader from the
     # active combo); None -> the built-in Infernal defaults.
     codes: object = None

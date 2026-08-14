@@ -117,6 +117,50 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(d.combo_names(), [])
         self.assertFalse(d.set_active_combo("Nope"))
 
+    def test_managed_columns_and_refill_accessors(self):
+        c = cfg.AppConfig.load()
+        self.assertEqual(c.managed_columns(), ["Q", "W", "E", "R"])
+        c.set_managed_columns(["Q", "R"])
+        self.assertEqual(c.managed_columns(), ["Q", "R"])
+        self.assertEqual(c.managed_indices(), {0, 3})
+        c.set_managed_columns(["Q", "Bogus"])   # invalid keys dropped
+        self.assertEqual(c.managed_columns(), ["Q"])
+        c.set_managed_columns([])               # never empty -> falls back to all
+        self.assertEqual(c.managed_columns(), ["Q", "W", "E", "R"])
+
+        self.assertFalse(c.refill_enabled())
+        self.assertEqual(c.refill_interval(), 0.4)
+        self.assertFalse(c.refill_mapping()["calibrated"])
+        c.set_refill_enabled(True)
+        c.set_refill_mapping(29.5, 123, 456)
+        self.assertTrue(c.refill_enabled())
+        self.assertTrue(c.refill_mapping()["calibrated"])
+        self.assertEqual(c.refill_mapping()["cell"], 29.5)
+        c.clear_refill_mapping()
+        self.assertFalse(c.refill_mapping()["calibrated"])
+
+    def test_refill_and_managed_persist(self):
+        c = cfg.AppConfig.load()
+        c.set_managed_columns(["Q", "E"])
+        c.set_refill_enabled(True)
+        c.set_refill_mapping(30, 100, 200)
+        c.save()
+        d = cfg.AppConfig.load()
+        self.assertEqual(d.managed_columns(), ["Q", "E"])
+        self.assertTrue(d.refill_enabled())
+        self.assertTrue(d.refill_mapping()["calibrated"])
+        self.assertEqual(d.refill_mapping()["cell"], 30)
+
+    def test_reset_refill_defaults(self):
+        c = cfg.AppConfig.load()
+        c.set_refill_enabled(True)
+        c.set_refill_mapping(30, 1, 2)
+        c.set_managed_columns(["Q"])
+        c.reset_to_defaults()
+        self.assertFalse(c.refill_enabled())
+        self.assertFalse(c.refill_mapping()["calibrated"])
+        self.assertEqual(c.managed_columns(), ["Q", "W", "E", "R"])
+
 
 class ModelsTests(unittest.TestCase):
     def test_potion_kinds(self):
@@ -253,6 +297,55 @@ class ModelsTests(unittest.TestCase):
         fam5 = m.infer_potion_family("other", 512, -1)
         self.assertEqual([(e.txt, e.kind, e.grade) for e in fam5], [(512, "other", -1)])
 
+    def test_belt_rows_for(self):
+        self.assertEqual(m.belt_rows_for(345), 2)     # Light Belt (this build)
+        self.assertEqual(m.belt_rows_for(348), 4)     # Plated Belt
+        self.assertEqual(m.belt_rows_for(360), 2)     # Infernal +15 Light Belt
+        self.assertIsNone(m.belt_rows_for(602))       # a potion, not a belt
+
+    def test_belt_empty_slots(self):
+        self.assertEqual(m.belt_empty_slots(1, []), [0, 1, 2, 3])
+        self.assertEqual(m.belt_empty_slots(2, [0, 4]), [1, 2, 3, 5, 6, 7])
+        self.assertEqual(m.belt_empty_slots(4, [0, 1, 2, 3]), [4, 5, 6, 7, 8, 9, 10, 11,
+                                                               12, 13, 14, 15])
+        self.assertEqual(m.belt_empty_slots(2, [0, 1, 2, 3, 4, 5, 6, 7]), [])
+        # Slots that don't exist on a smaller belt are ignored.
+        self.assertEqual(m.belt_empty_slots(1, []), [0, 1, 2, 3])
+
+    def test_solve_grid_mapping(self):
+        # Two samples on different cells solve cell + origin (least squares).
+        solved = m.solve_grid_mapping([(0, 0, 100, 200), (2, 1, 100 + 58, 200 + 29)])
+        self.assertIsNotNone(solved)
+        cell, ox, oy = solved
+        self.assertAlmostEqual(cell, 29.0, places=6)
+        self.assertAlmostEqual(ox, 100.0, places=6)
+        self.assertAlmostEqual(oy, 200.0, places=6)
+        # Three noisy samples still converge to the true grid.
+        solved = m.solve_grid_mapping([
+            (0, 0, 100, 200), (1, 0, 129.2, 200.1), (0, 2, 100.1, 258),
+        ])
+        cell, ox, oy = solved
+        self.assertAlmostEqual(cell, 29.0, places=1)
+        self.assertAlmostEqual(ox, 100.0, places=0)
+        self.assertAlmostEqual(oy, 200.0, places=0)
+        # With a known cell a single sample is enough to find the origin.
+        solved = m.solve_grid_mapping([(5, 3, 100 + 5 * 29, 200 + 3 * 29)], cell=29.0)
+        cell, ox, oy = solved
+        self.assertAlmostEqual(cell, 29.0, places=6)
+        self.assertAlmostEqual(ox, 100.0, places=6)
+        self.assertAlmostEqual(oy, 200.0, places=6)
+        # Degenerate inputs -> None.
+        self.assertIsNone(m.solve_grid_mapping([]))
+        self.assertIsNone(m.solve_grid_mapping([(0, 0, 100, 200)]))
+        self.assertIsNone(m.solve_grid_mapping([(0, 0, 100, 200), (1, 1, 100, 200)], cell=0))
+
+    def test_potion_counts_belt_slots(self):
+        pc = m.PotionCounts()
+        pc.belt_rows = 2
+        pc.belt_filled = [0, 4]
+        pc.belt_empty = m.belt_empty_slots(2, pc.belt_filled)
+        self.assertEqual(pc.belt_empty, [1, 2, 3, 5, 6, 7])
+
     def test_choose_belt_column_uses_custom_codes(self):
         codes = m.PotionCodes([m.PotionEntry(587, "heal", 0),
                                m.PotionEntry(588, "heal", 1)])
@@ -307,6 +400,65 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(GameReader._merc_values(raw3), (0, 189))
         # No max -> no merc.
         self.assertEqual(GameReader._merc_values({STAT["Life"]: 10}), (0, 0))
+
+
+class RefillTests(unittest.TestCase):
+    def _potion(self, txt, kind, grade, x=0, y=0, unit_id=1):
+        return {"unit_id": unit_id, "txt": txt, "kind": kind,
+                "grade": grade, "x": x, "y": y}
+
+    def test_refillable_potions_filters_and_sorts(self):
+        from d2r.refill import refillable_potions
+        pool = [
+            self._potion(532, "other", -1),       # stamina - never auto-moved
+            self._potion(608, "mana", 1),
+            self._potion(602, "heal", 0),
+            self._potion(530, "rejuv", 0),
+        ]
+        got = refillable_potions(pool)
+        self.assertEqual([p["txt"] for p in got], [602, 530, 608])
+        self.assertNotIn(532, [p["txt"] for p in got])
+
+    def test_plan_refills_prefers_last_consumed_kind(self):
+        from d2r.refill import plan_refills
+        potions = [
+            self._potion(602, "heal", 0, x=1, y=0),
+            self._potion(608, "mana", 1, x=2, y=0),
+        ]
+        plan = plan_refills([2, 5], potions, last_kind="heal")
+        self.assertEqual(len(plan), 2)
+        self.assertEqual(plan[0]["slot"], 2)          # fill order: bottom row first
+        self.assertEqual(plan[0]["potion"]["kind"], "heal")   # restock what was drunk
+        self.assertEqual(plan[1]["slot"], 5)
+        self.assertEqual(plan[1]["potion"]["kind"], "mana")
+
+    def test_plan_refills_no_last_kind_uses_any(self):
+        from d2r.refill import plan_refills
+        potions = [self._potion(608, "mana", 1)]
+        plan = plan_refills([0, 1], potions, last_kind=None)
+        self.assertEqual(len(plan), 1)                # one potion, one click
+        self.assertEqual(plan[0]["potion"]["kind"], "mana")
+
+    def test_plan_refills_empty_inputs(self):
+        from d2r.refill import plan_refills
+        self.assertEqual(plan_refills([], [self._potion(602, "heal", 0)]), [])
+        self.assertEqual(plan_refills([3], []), [])
+        self.assertEqual(plan_refills([], []), [])
+        # Utility-only inventory -> nothing to move.
+        self.assertEqual(plan_refills([3], [self._potion(532, "other", -1)]), [])
+
+    def test_belt_fill_order_bottom_row_first(self):
+        from d2r.refill import belt_fill_order
+        self.assertEqual(belt_fill_order([6, 1, 4, 2]), [1, 2, 4, 6])
+
+    def test_plan_refills_no_duplicate_use(self):
+        from d2r.refill import plan_refills
+        potions = [self._potion(602, "heal", 0, unit_id=10)]
+        plan = plan_refills([1, 2, 3], potions, last_kind="heal")
+        # One potion can only fill one slot per plan (the rest refills on later
+        # ticks after the game moves the first potion into the belt).
+        self.assertEqual(len(plan), 1)
+        self.assertEqual(plan[0]["potion"]["unit_id"], 10)
 
 
 class FakeSender:
@@ -497,6 +649,31 @@ class WatcherTests(unittest.TestCase):
         s = self._snap(hp=70, mana=90)   # potion_counts.ok stays False
         w._tick(s)
         self.assertEqual(w.sender.pressed_keys, [("heal", None)])
+
+    def test_pick_respects_managed_columns(self):
+        w = self._watcher()
+        w.config.keys["heal"] = ["Q", "R"]
+        # HP 45% (above the rejuv line) so only the heal branch runs.
+        w.config.set_managed_columns(["Q", "W", "E"])
+        snap = self._belt_snap(hp=90, mana=90, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 532), self._col("R", 602)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed, [])   # R is off-limits -> skip
+        # Managing R again lets the app use it.
+        w.config.set_managed_columns(["Q", "W", "E", "R"])
+        w.sender.pressed = []
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
+
+    def test_last_kind_tracked_for_refill(self):
+        w = self._watcher()
+        w.config.keys["heal"] = ["Q", "R"]
+        snap = self._belt_snap(hp=120, mana=150, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 602), self._col("R", 605)])
+        w._tick(snap)
+        self.assertEqual(w._last_kind, "heal")
+        w._tick(self._snap(hp=90, mana=50))
+        self.assertEqual(w._last_kind, "mana")
 
 
 class HotkeyTests(unittest.TestCase):

@@ -52,6 +52,14 @@ presses the correct belt keys for you.
 - **Optional global hotkey.** A system-wide toggle (Triggers tab) arms/disarms
   the watcher from anywhere — even while the game is focused.  Disabled by
   default.
+- **Managed belt columns.** The *Keys* tab lets you uncheck belt columns the app
+  is allowed to touch — unchecked columns are never drunk from or refilled, so
+  you keep manual control of them (default: all four Q/W/E/R managed).
+- **Automatic belt refill.** While your inventory panel is open, the app can move
+  potions from the inventory into empty managed belt slots (one click per tick,
+  only when the game window is foreground, restocking what was just drunk
+  first).  Click positions are measured once by hovering two inventory potions
+  and pressing F8 — no resolution-specific constants.
 - **Safe by default.** Pauses while inventory / stash / vendor / menus are open,
   never presses keys outside a live game, tracks Battle Orders when computing
   HP/MP percentages, and defaults to **disarmed** — you arm it deliberately.
@@ -111,6 +119,39 @@ tab if you use a different profile.  Merc actions add Shift (D2R's feed-merc
 binding).  Rebind any key by clicking its button and pressing the new key; use
 the **`+`** button to bind an action to a *second* belt column (e.g. `Q` + `R`
 for health) — the watcher then picks the grade-appropriate column automatically.
+
+### Managed belt columns
+
+Below the bindings, the *Keys* tab has a checkbox per belt column (Q/W/E/R).
+Uncheck a column to keep the app entirely off it — it will **not** drink from
+that column and will **not** refill it, so you keep manual control of potions
+there.  All columns are managed by default.
+
+## Belt refill from inventory
+
+The *Keys* tab also has a **Belt refill** section.  When enabled, the app keeps
+your belt topped up: while the **inventory panel is open**, if a managed belt
+slot is empty, it clicks a matching potion from your inventory into the belt —
+restocking the family you last drank first, other families after.  One click per
+tick, throttled, and only while the game window is the **foreground** window, so
+clicks always land on the game.
+
+Clicking a potion in D2R fills the first empty belt slot the engine chooses, so
+the app drives the *potion choice* (it tracks the belt's fill order).  A
+per-slot belt layout is planned for a later iteration.
+
+**One-time click calibration.** The app must know where inventory cells are on
+screen (varies by resolution/window size).  With your inventory open in-game:
+
+1. Click **Calibrate…** on the *Keys* tab.
+2. Hover the mouse over a potion in your inventory and press **F8**.
+3. Hover over a *different* potion and press **F8** again.
+4. Click **Finish & save**.
+
+The app reads the hovered item's grid cell from memory, pairs it with the cursor
+position, and solves the grid (cell size + origin).  **Clear** removes the
+mapping.  The *Keys* tab also shows your belt's live size (4×1 to 4×4 slots)
+and how many slots are filled/free.
 
 ## Triggers (defaults)
 
@@ -234,6 +275,10 @@ If an update changes `D2R.exe` so a signature no longer matches, the tool shows
 - **Admin/elevation.** If D2R runs as Administrator while the tool does not,
   Windows (UIPI) silently blocks `SendInput` — the Log tab will show
   `Key send FAILED`.  Run the tool elevated too in that case.
+- **Belt refill placement.** Clicking a potion in D2R fills the first empty belt
+  slot the engine picks, so the refill drives the potion choice, not an exact
+  slot.  It only acts while the inventory panel is open and only clicks when the
+  game window is the foreground window.
 - **Single-player / offline QoL.** Online play is subject to Blizzard's terms
   of service.  Use at your own risk.
 - **Window focus.** The tool briefly brings the game window to the foreground
@@ -253,6 +298,8 @@ d2r/
   reader.py              GameReader: player / merc / menus / potion counts
   models.py              stat/state/npc constants + snapshot types
   keys.py                SendInput key simulation (NO AutoHotkey)
+  input.py               mouse + window helpers for the belt refill clicker
+  refill.py              pure refill-planning logic (managed columns, fill order)
   watcher.py             auto-potion decision loop + session stats
   config.py              persisted settings, profiles, presets
   log.py                 persistent auto-rotating event log

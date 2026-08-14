@@ -17,11 +17,12 @@ import threading
 import customtkinter as ctk
 
 from d2r import __version__, models as m
+from d2r import input as input_mod
 from d2r.config import AppConfig, PRESETS
-from d2r.process import Process, ProcessNotFound
+from d2r.process import Process, ProcessNotFound, find_window_for_pid
 from d2r.reader import GameReader
 from d2r.watcher import PotionWatcher
-from d2r.keys import vk_name
+from d2r.keys import vk_name, VK
 from d2r.log import EventLog
 from d2r.hotkey import HotkeyListener, parse_hotkey, spec_for
 from d2r.hotkey import mod_from_keysym as hotkey_mod_from_keysym
@@ -85,10 +86,7 @@ _CALIB_INSTRUCTIONS = (
     "3. The app reads the belt slots in memory, finds the code automatically, "
     "saves it, and fills in the rest of its family (Minor→Full) when the codes "
     "are consecutive, as in D2R.\n"
-    "4. Repeat for any other potion you use, then play.  It's stored in your "
-    "settings and never needs calibrating again — not even after a restart.\n\n"
-    "The app locates the belt and inventory slots in game memory itself; you "
-    "only place potions.  No addresses, no code numbers to type."
+    "4. Repeat for any other potion you use, then play.\n\n"
 )
 
 
@@ -113,6 +111,10 @@ class MainApp(ctk.CTk):
         self._last_connect_attempt = 0.0
         self._last_discover = 0.0
         self._shown_errors: set[str] = set()
+        # Belt-refill click calibration state.
+        self._calib_capture = False
+        self._calib_samples: list = []
+        self._calib_hotkey: HotkeyListener | None = None
 
         self.event_log = EventLog()
         self.hotkey: HotkeyListener | None = None
@@ -486,11 +488,53 @@ class MainApp(ctk.CTk):
             self._refresh_key_button(action)
 
         w.hint(parent, "Click a binding to rebind it; use + to add another belt "
-                      "column to the same action (e.g. heal -> Q + R). Merc actions "
-                      "are sent with the Shift modifier (D2R's feed-merc binding). "
-                      "Match these to your in-game belt layout; the 4th column (R) "
-                      "is supported and the watcher picks the best grade in the "
-                      "bound columns.").pack(anchor="w", padx=12, pady=(6, 14))
+                       "column to the same action (e.g. heal -> Q + R). Merc actions "
+                       "are sent with the Shift modifier (D2R's feed-merc binding). "
+                       "Match these to your in-game belt layout; the 4th column (R) "
+                       "is supported and the watcher picks the best grade in the "
+                       "bound columns.").pack(anchor="w", padx=12, pady=(6, 8))
+
+        w.heading(parent, "Belt columns the app manages").pack(anchor="w", padx=12, pady=(4, 4))
+        man = ctk.CTkFrame(parent, fg_color="transparent")
+        man.pack(anchor="w", padx=12, pady=(0, 4))
+        self._managed_boxes: dict[str, ctk.CTkCheckBox] = {}
+        for col in m.BELT_COLUMN_KEYS:
+            box = ctk.CTkCheckBox(man, text=col, command=self._on_managed_toggle)
+            box.pack(side="left", padx=(0, 14))
+            self._managed_boxes[col] = box
+        self._refresh_managed()
+        w.hint(parent, "Uncheck a belt column to keep the app entirely off it — "
+                       "it won't drink from or refill that column.  The game's own "
+                       "inventory button (I) and menu are never touched.").pack(anchor="w", padx=12, pady=(0, 10))
+
+        w.heading(parent, "Belt refill from inventory").pack(anchor="w", padx=12, pady=(4, 4))
+        self._refill_switch = ctk.CTkSwitch(
+            parent, text="Refill the belt from your inventory while the inventory panel is open",
+            command=self._on_refill_toggle)
+        self._refill_switch.pack(anchor="w", padx=12, pady=4)
+        self._refill_switch.select() if self.config.refill_enabled() else self._refill_switch.deselect()
+
+        cal = ctk.CTkFrame(parent, fg_color="transparent")
+        cal.pack(anchor="w", padx=12, pady=(8, 0), fill="x")
+        ctk.CTkLabel(cal, text="Click positions", font=ctk.CTkFont(size=12)).pack(side="left")
+        self._calib_btn = ctk.CTkButton(cal, text="Calibrate…", width=110, height=28,
+                                        command=self._toggle_calib_capture)
+        self._calib_btn.pack(side="left", padx=(10, 0))
+        self._calib_finish_btn = ctk.CTkButton(cal, text="Finish & save", width=110, height=28,
+                                               fg_color=GOOD, hover_color="#22914f",
+                                               command=self._finish_calib)
+        self._calib_finish_btn.pack(side="left", padx=(6, 0))
+        self._calib_clear_btn = ctk.CTkButton(cal, text="Clear", width=70, height=28,
+                                              fg_color="#444", hover_color="#555",
+                                              command=self._clear_calib)
+        self._calib_clear_btn.pack(side="left", padx=(6, 0))
+        self._calib_status = ctk.CTkLabel(parent, text="", font=ctk.CTkFont(size=11),
+                                          text_color=WARN, wraplength=760, justify="left")
+        self._calib_status.pack(anchor="w", padx=12, pady=(4, 2))
+        self._belt_info = ctk.CTkLabel(parent, text="", font=ctk.CTkFont(size=11),
+                                       text_color="#8ab4f8")
+        self._belt_info.pack(anchor="w", padx=12, pady=(0, 4))
+        self._refresh_refill_status()
 
         w.heading(parent, "Behaviour").pack(anchor="w", padx=12, pady=(4, 4))
         self._focus_switch = ctk.CTkSwitch(parent, text="Auto-focus game window before pressing keys",
@@ -604,6 +648,129 @@ class MainApp(ctk.CTk):
         """Set the watcher refresh interval (live - applied next tick)."""
         self.config.behavior["poll_interval_ms"] = int(round(value))
         self.config.save()
+
+    # ------------------------------------------- belt columns + refill UI
+    def _refresh_managed(self):
+        managed = set(self.config.managed_columns())
+        for col, box in self._managed_boxes.items():
+            box.select() if col in managed else box.deselect()
+
+    def _on_managed_toggle(self):
+        self.config.set_managed_columns(
+            [k for k, box in self._managed_boxes.items() if box.get()])
+        self.config.save()
+        self._refresh_managed()   # normalise to "all columns" when none selected
+
+    def _on_refill_toggle(self):
+        self.config.set_refill_enabled(bool(self._refill_switch.get()))
+        self.config.save()
+
+    def _refresh_refill_status(self):
+        mapping = self.config.refill_mapping()
+        if mapping.get("calibrated"):
+            self._calib_status.configure(
+                text=f"Calibrated: cell {float(mapping['cell']):.1f}px, origin "
+                     f"({float(mapping['origin_x']):.0f}, {float(mapping['origin_y']):.0f})",
+                text_color=GOOD)
+        else:
+            self._calib_status.configure(
+                text="Not calibrated yet. While in-game with your inventory open, hover over a "
+                     "potion and press F8 (twice, on different potions), then click 'Finish & save'.",
+                text_color=WARN)
+
+    def _refresh_belt_info(self):
+        pc = self.watcher.snapshot().potion_counts if self.watcher else m.PotionCounts()
+        if not pc.ok:
+            self._belt_info.configure(text="Belt: —")
+            return
+        rows = max(1, int(pc.belt_rows))
+        self._belt_info.configure(
+            text=f"Belt: {rows * 4} slots ({rows} row{'s' if rows != 1 else ''}), "
+                 f"{len(pc.belt_filled)} filled / {len(pc.belt_empty)} free")
+
+    def _toggle_calib_capture(self):
+        if self._calib_capture:
+            self._exit_calib_capture()
+            return
+        if not (self.connected and self.proc is not None and self.reader):
+            self._calib_status.configure(text="Connect to the game first (Dashboard).", text_color=DANGER)
+            return
+        self._calib_capture = True
+        self._calib_samples = []
+        self._calib_btn.configure(text="Stop capture")
+        self._calib_status.configure(
+            text="Capture: open your inventory in-game, hover the mouse over a potion and press F8. "
+                 "Repeat on a different potion, then click 'Finish & save'.", text_color=ACCENT)
+        try:
+            self._calib_hotkey = HotkeyListener(
+                0, VK["F8"], lambda: self.after(0, self._record_calib_sample))
+            if not self._calib_hotkey.start():
+                self._calib_hotkey = None
+                self._calib_status.configure(text="Could not register F8 (already in use?).", text_color=DANGER)
+        except Exception as exc:
+            self._calib_hotkey = None
+            self._calib_status.configure(text=f"Could not register F8: {exc}", text_color=DANGER)
+
+    def _exit_calib_capture(self):
+        self._calib_capture = False
+        self._calib_btn.configure(text="Calibrate…")
+        if self._calib_hotkey:
+            self._calib_hotkey.stop()
+            self._calib_hotkey = None
+        self._refresh_refill_status()
+
+    def _record_calib_sample(self):
+        if not (self._calib_capture and self.reader and self.proc):
+            return
+        unit_id = self.reader.hovered_item_unit()
+        if not unit_id:
+            self._calib_status.configure(
+                text=f"Sample {len(self._calib_samples)}: nothing hovered. Move the mouse onto an "
+                     "inventory potion and press F8 again.", text_color=WARN)
+            return
+        potion = next((p for p in self.reader.inventory_potions()
+                       if p.get("unit_id") == unit_id), None)
+        if not potion:
+            self._calib_status.configure(
+                text="Hovered item is not a potion on the inventory page.", text_color=WARN)
+            return
+        hwnd = find_window_for_pid(self.proc.pid)
+        rect = input_mod.window_rect(hwnd) if hwnd else None
+        if not rect:
+            self._calib_status.configure(text="Could not read the game window bounds.", text_color=DANGER)
+            return
+        sx, sy = input_mod.cursor_pos()
+        self._calib_samples.append(
+            (int(potion["x"]), int(potion["y"]), sx - rect[0], sy - rect[1]))
+        self._calib_status.configure(
+            text=f"Sample {len(self._calib_samples)}: grid cell ({potion['x']}, {potion['y']}). "
+                 "Press F8 over a different potion, then 'Finish & save'.", text_color=GOOD)
+
+    def _finish_calib(self):
+        if not self._calib_capture:
+            self._calib_status.configure(text="Start a capture first ('Calibrate…').", text_color=WARN)
+            return
+        existing = self.config.refill_mapping()
+        cell = float(existing.get("cell", 29.0)) if existing.get("calibrated") else None
+        solved = m.solve_grid_mapping(self._calib_samples, cell=cell)
+        if not solved:
+            self._calib_status.configure(
+                text="Could not solve the grid. Capture two samples on different potions that are "
+                     "not in the same row and column.", text_color=DANGER)
+            return
+        c, ox, oy = solved
+        self.config.set_refill_mapping(c, ox, oy)
+        self.config.save()
+        self._exit_calib_capture()
+        self._calib_status.configure(
+            text=f"Saved: cell {c:.1f}px, origin ({ox:.0f}, {oy:.0f}). Refill is ready.", text_color=GOOD)
+
+    def _clear_calib(self):
+        if self._calib_capture:
+            self._exit_calib_capture()
+        self.config.clear_refill_mapping()
+        self.config.save()
+        self._refresh_refill_status()
 
     # ------------------------------------------------------- global hotkey
     def _on_hotkey(self, value):
@@ -918,7 +1085,7 @@ class MainApp(ctk.CTk):
         self.diag_hint.pack(side="left", padx=12)
 
         w.hint(parent, "If 'UnitTable' is NOT RESOLVED or 'plausible: NO', the byte signatures "
-                      "in d2r/offsets.py do not match build 3.0.91636 yet. Send the output below "
+                      "in d2r/offsets.py do not match yet. Send the output below "
                       "and we can add the correct pattern.").pack(anchor="w", padx=12, pady=(4, 6))
 
         self.diag_box = ctk.CTkTextbox(parent, wrap="none")
@@ -1083,6 +1250,8 @@ class MainApp(ctk.CTk):
         """Stop the watcher and drop all process/reader references."""
         if self.watcher:
             self.watcher.stop()
+        if self._calib_capture:
+            self._exit_calib_capture()
         self.proc = self.reader = self.watcher = None
         self.connected = False
 
@@ -1097,6 +1266,7 @@ class MainApp(ctk.CTk):
                 else:
                     snap = self.watcher.snapshot()
                     self._update_dashboard(snap)
+                    self._refresh_belt_info()
                     if snap.error and snap.error not in self._shown_errors:
                         self._shown_errors.add(snap.error)
                         self.on_event(m.GameEvent(kind="error", message=snap.error))
@@ -1122,6 +1292,8 @@ class MainApp(ctk.CTk):
         """Stop the watcher thread + hotkey before the window closes (clean exit)."""
         if self.watcher:
             self.watcher.stop()
+        if self._calib_hotkey:
+            self._calib_hotkey.stop()
         if self.hotkey:
             self.hotkey.stop()
         self.destroy()

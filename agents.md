@@ -16,8 +16,10 @@ Agentic-AI working notes. Keep this file short and current: update the *Goals* a
   smaller storage devices without asking.
 - **Read-only game-memory probes** of the running D2R process (the tool's own
   `GameReader`, `diagnose()`, belt/inventory scans) are part of normal app
-  operation and are always allowed.  NEVER send keys or enable the watcher
-  during dev.
+  operation and are always allowed.  NEVER send keys, NEVER send mouse clicks,
+  and NEVER enable the watcher during dev — keys and clicks (including the
+  belt-refill clicker) are runtime-only features.  The refill clicker itself
+  refuses to click unless the game window is the foreground window.
 - **Cleanup** (temp probers, deprecated hunts, dead code) is deferred to the
   feature-complete version of the app - do not delete anything yet.
 
@@ -63,35 +65,51 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Goals / tasks
 
-- **v1.3.0 Iteration 4 (user calibration) — in progress**:
-  end users teach the app the potion txtFileNo codes (and optional merc
-  hireling txtFileNo) their build uses, instead of relying on the built-in
-  Infernal table.  New Calibrate tab is a **guided wizard**: the user places one
-  known potion (e.g. Minor Mana) in all 4 belt corners, picks it in a dropdown,
-  clicks "Scan belt corners" — the app reads the corner slot codes from game
-  memory itself (`corner_potion_code`), infers the whole consecutive family
-  (`infer_potion_family`), and saves it into an auto-active "Calibrated build"
-  profile persisted in config (`save_combo`); "Learned so far" preview + "Clear
-  calibration" fall back to built-ins; Diagnostics reports the active profile's
-  codes.  No code numbers or addresses are shown to the user.
+- **v1.4.0 Iteration 5 (managed columns + belt refill) — in progress**:
+  user asked for improved auto-potion usage.  **Iteration A (built now)**:
+  the app can manage all 4 belt columns (Q/W/E/R checkboxes on the Keys tab;
+  unmanaged columns are never drunk from or refilled) and a **dumb-tier belt
+  refill**: while the inventory panel is open, if a managed belt slot is empty,
+  click a matching inventory potion into it (restocks the family last drunk
+  first).  One click per tick, throttled (default 400ms), only while the game
+  window is the foreground window (`d2r/input.py` SetCursorPos + SendInput click;
+  clicks never land while another window has focus).  Click positions are
+  calibrated in-game by hovering two inventory potions and pressing F8
+  (HotkeyListener) — the hovered item's grid cell (Hover struct + item path X/Y)
+  is paired with the cursor position and `solve_grid_mapping` least-squares
+  solves cell size + client-relative origin (persisted in config refill section).
+  Belt rows are read from the equipped belt item's txtFileNo
+  (`BELT_ROWS_BY_TXTFILE`: classic + Infernal +15 ids; 4x1..4x4) with a fallback
+  to the tallest occupied row.  **Iteration B (planned)**: per-slot 4xN belt
+  layout grid config + smart consume (smallest sufficient potion, prefer specific
+  over rejuv) + layout/ratio refill with preference order (user-defined → same
+  type → same family → mix).
 - **Done**: v1.0.0 baseline, v1.1.0 potion monitoring / profiles / presets / event log /
   session stats / global hotkey (landed 2026-08-14).
 - **Done (v1.2.0)**: Iteration 1 (user-customizable global hotkey, presets at
   top of Triggers, persistent profile strip), Iteration 2 (4th column + grade
   mechanics), Iteration 3 (grade-aware selection, corrected Infernal codes
   +15, multi-key bindings, out-of-stock guard) — all landed 2026-08-14.
+- **Done (v1.3.0)**: Iteration 4 Calibrate wizard (user teaches potion codes
+  via belt-corner scan, no code typing) — landed 2026-08-14 (commit `2f89079`).
 - **Confirmed**: player/merc unit offsets match the Go reference build exactly
   (same `unit-hash-v3` signature, unit struct + stat offsets, `<<8` stat
   shift); only the item txtFileNo codes moved (+15).  Calibrate tab covers
   codes + merc id; if a future build breaks player/merc offsets the Diagnostics
   offset scan pinpoints which signature failed.
+- **Belt facts confirmed live**: equipped belt keeps its classic txtFileNo
+  (Light Belt = 345 → 2 rows, NOT +15); inventory potions expose grid X/Y via
+  the item path (`ITEM_PATH_OFFSET_X=0x10`, `ITEM_PATH_OFFSET_Y=0x14`);
+  Hover struct reads at base+offsets.Hover (u16 flag, u32 type, u32 unit id);
+  client rect 2560x1440; `ITEM_LOC_INVENTORY` is 0 (loc==0 IS the inventory).
 
 ## Build state
 
-- Version `1.3.0`. Test suite: 47 tests green (PotionCodes/combos coverage +
-  wizard helpers `corner_potion_code`/`infer_potion_family`).  Belt + inventory +
-  player + merc live-verified against pid 20048 (Sylus, Warlock 20) — belt
-  corners {0:532, 3:528, 4:608, 7:529} (mixed, so the wizard's single-code
-  corner check correctly returns None until one potion fills all corners);
-  wizard round-trip (learn Light Mana 608 → 607..611 → save/reload/delete combo)
-  verified against a temp config.
+- Version `1.4.0`. Test suite: 62 tests green (added `belt_rows_for`,
+  `belt_empty_slots`, `solve_grid_mapping`, refill planner tests, config
+  refill/managed-column accessors, watcher managed-column gating + last-kind
+  tracking).  Belt + inventory + player + merc live-verified against pid 20048
+  (Sylus, Warlock 20) — belt corners {0:532, 3:528, 4:608, 7:529}; wizard
+  round-trip verified against a temp config.  Refill probes live against pid
+  25000 (char select): offsets ok, item read correctly reports no game; the
+  equipped-belt/inventory/hover reads need a live game to fully verify.

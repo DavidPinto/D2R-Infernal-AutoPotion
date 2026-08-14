@@ -5,6 +5,50 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-08-14
+
+Improved auto potion (Iteration A: managed columns + belt refill).
+
+### Added
+
+- **Managed belt columns**: the Keys tab lets you uncheck belt columns (Q/W/E/R)
+  the app is allowed to touch.  Unchecked columns are never drunk from and never
+  refilled — you keep manual control of them.  Default: all four managed.
+- **Belt refill from inventory**: when enabled, the app watches your belt while
+  the inventory panel is open and, if a managed belt slot is empty, clicks a
+  matching potion from your inventory into it (restocking what was just drunk
+  first, other families after).  One click per tick, only while the game window
+  is the foreground window, and only into the columns you manage.
+- **Click-position calibration wizard**: refill needs to know where inventory
+  cells are on screen, which varies by resolution.  In-game, hover over a potion
+  in your inventory and press F8 (twice, on different potions), then click
+  *Finish & save*.  The app solves the grid (cell size + origin) from the hover
+  cursor and the item's grid coordinates.  *Clear* removes it.
+- **Belt slot readout** on the Keys tab: number of belt rows / slots, how many
+  are filled and free (live, from the equipped belt item — supports 4×1 to 4×4).
+- `AppConfig` refill section (`enabled`, calibrated click mapping, click
+  interval) + `managed` column list, both persisted in `config/config.json`.
+- Pure, unit-tested helpers: `belt_rows_for`, `belt_empty_slots`,
+  `solve_grid_mapping`, `plan_refills` (dumb-tier choice), `belt_fill_order`.
+
+### Changed
+
+- The watcher's grade-aware column picker now also filters by managed columns.
+- New `d2r/refill.py` (pure planning) and `d2r/input.py` (mouse + window
+  helpers on Win32 SendInput/SetCursorPos; clicks only land when the game
+  window is foreground).
+- `GameReader` exposes `belt_rows`/`belt_filled`/`belt_empty` on
+  `PotionCounts`, an `inventory_potions()` read (grid cell + unit id), and
+  `hovered_item_unit()` for the calibration wizard.
+
+### Notes
+
+- Refill only acts while your inventory panel is open (no auto-opening the
+  panel, no clicks during combat).  Clicking a potion in D2R fills the first
+  empty belt slot the engine chooses, so the app drives the *potion choice* by
+  the belt's fill order; a per-slot belt layout (the "smart" tier) is planned
+  for the next iteration.
+
 ## [1.3.0] - 2026-08-14
 
 User calibration: end users can teach the app their build's potion codes.

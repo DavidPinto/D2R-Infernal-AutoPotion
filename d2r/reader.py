@@ -14,6 +14,8 @@ show the read as failed/implausible so it is easy to catch.
 
 from __future__ import annotations
 
+import struct
+
 from . import models as m
 from .offsets import Offsets, calculate_offsets, _is_likely_ptr, _unit_looks_valid
 from .process import Process
@@ -281,6 +283,8 @@ class GameReader:
         # vendor grid shares loc 2 in this build, so we only keep items owned by
         # the player (owner == main unit id).
         belt_cols: dict[int, list] = {c: [] for c in range(len(m.BELT_COLUMN_KEYS))}
+        belt_filled: list[int] = []
+        belt_rows = 0
         seen = 0
         for i in range(m.UNIT_TABLE_ENTRIES):
             unit = int.from_bytes(buckets[i * 8:i * 8 + 8], "little")
@@ -291,24 +295,38 @@ class GameReader:
                 if len(buf) < 0x158:
                     break
                 if int.from_bytes(buf[0x00:0x04], "little") == m.ITEM_UNIT_TYPE:
-                    kind = self.codes.kind(int.from_bytes(buf[0x04:0x08], "little"))
+                    txt = int.from_bytes(buf[0x04:0x08], "little")
+                    kind = self.codes.kind(txt)
+                    loc = int.from_bytes(buf[0x0C:0x10], "little")
+                    ud = int.from_bytes(buf[0x10:0x18], "little")
+                    owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
                     if kind:
-                        loc = int.from_bytes(buf[0x0C:0x10], "little")
-                        ud = int.from_bytes(buf[0x10:0x18], "little")
-                        owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
                         if loc == m.ITEM_LOC_BELT and (not main_id or owner == main_id):
                             counts.belt[kind] += 1
                             path = int.from_bytes(buf[0x38:0x40], "little")
                             slot_x = self.proc.read_u16(path + m.ITEM_PATH_OFFSET_X) if path else -1
                             col = slot_x % len(m.BELT_COLUMN_KEYS) if slot_x >= 0 else 0
-                            belt_cols.setdefault(col, []).append((slot_x, int.from_bytes(buf[0x04:0x08], "little")))
+                            belt_cols.setdefault(col, []).append((slot_x, txt))
+                            if slot_x >= 0:
+                                belt_filled.append(slot_x)
                         elif loc == m.ITEM_LOC_INVENTORY and main_id:
                             if ud:
                                 page = self.proc.read_u8(ud + m.ITEM_UNIT_DATA_OFFSET_INVPAGE)
                                 flags = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_FLAGS)
                                 if (owner == main_id and page == 0 and not (flags & 0x2000)):
                                     counts.inventory[kind] += 1
+                    elif loc == m.ITEM_LOC_EQUIPPED and owner == main_id:
+                        # The equipped belt (any class of belt) tells us the grid.
+                        if m.belt_rows_for(txt):
+                            belt_rows = m.belt_rows_for(txt)
                 unit = int.from_bytes(buf[0x150:0x158], "little")
+
+        counts.belt_filled = sorted(set(belt_filled))
+        # Belt rows: known belt item id, else the tallest occupied row, else 1.
+        if not belt_rows and counts.belt_filled:
+            belt_rows = counts.belt_filled[-1] // 4 + 1
+        counts.belt_rows = belt_rows or 1
+        counts.belt_empty = m.belt_empty_slots(counts.belt_rows, counts.belt_filled)
 
         for col_idx, entries in belt_cols.items():
             if not entries or not (0 <= col_idx < len(counts.columns)):
@@ -323,6 +341,78 @@ class GameReader:
         counts.codes = self.codes
         counts.ok = seen > 0
         return counts
+
+    def inventory_potions(self) -> list[dict]:
+        """Personal-inventory potions with their grid cell (page 0 only).
+
+        Each entry is ``{"unit_id", "txt", "kind", "grade", "x", "y"}`` where
+        x/y are the inventory grid cell (0-based) used by the refill clicker.
+        Returns [] when the item table is unavailable."""
+        out: list[dict] = []
+        if not self.offsets.UnitTable:
+            return out
+        base = self._base()
+        table = base + self.offsets.UnitTable + m.UNIT_TABLE_ITEM_OFFSET
+        main_id = 0
+        pu, _ = self._find_player_unit()
+        if pu:
+            main_id = self.proc.read_u32(pu + m.UNIT_OFFSET_UNIT_ID)
+        buckets = self.proc.read_bytes(table, m.UNIT_TABLE_ENTRIES * 8)
+        if len(buckets) < m.UNIT_TABLE_ENTRIES * 8 or not main_id:
+            return out
+        seen = 0
+        for i in range(m.UNIT_TABLE_ENTRIES):
+            unit = int.from_bytes(buckets[i * 8:i * 8 + 8], "little")
+            while unit and seen < 512:
+                seen += 1
+                buf = self.proc.read_bytes(unit, 0x160)
+                if len(buf) < 0x158:
+                    break
+                if int.from_bytes(buf[0x00:0x04], "little") != m.ITEM_UNIT_TYPE:
+                    unit = int.from_bytes(buf[0x150:0x158], "little")
+                    continue
+                txt = int.from_bytes(buf[0x04:0x08], "little")
+                kind = self.codes.kind(txt)
+                if not kind:
+                    unit = int.from_bytes(buf[0x150:0x158], "little")
+                    continue
+                loc = int.from_bytes(buf[0x0C:0x10], "little")
+                ud = int.from_bytes(buf[0x10:0x18], "little")
+                owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
+                if loc == m.ITEM_LOC_INVENTORY and owner == main_id and ud:
+                    page = self.proc.read_u8(ud + m.ITEM_UNIT_DATA_OFFSET_INVPAGE)
+                    flags = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_FLAGS)
+                    if page == 0 and not (flags & 0x2000):
+                        path = int.from_bytes(buf[0x38:0x40], "little")
+                        if path:
+                            out.append({
+                                "unit_id": int.from_bytes(buf[0x08:0x0C], "little"),
+                                "txt": txt, "kind": kind,
+                                "grade": self.codes.grade(txt),
+                                "x": self.proc.read_u16(path + m.ITEM_PATH_OFFSET_X),
+                                "y": self.proc.read_u16(path + m.ITEM_PATH_OFFSET_Y),
+                            })
+                unit = int.from_bytes(buf[0x150:0x158], "little")
+        return out
+
+    def hovered_item_unit(self) -> int:
+        """Unit id of the item the mouse is hovering over, or 0 when none.
+
+        Reads the engine's Hover struct (12 bytes at the UI base): u16 hovered
+        flag, u32 hovered unit type, u32 hovered unit id.  Used by the refill
+        click-position calibration to tie a grid cell to a screen position."""
+        if not self.offsets.Hover:
+            return 0
+        try:
+            buf = self.proc.read_bytes(self._base() + self.offsets.Hover, 12)
+            if len(buf) != 12:
+                return 0
+            flag, utype, unit_id = struct.unpack("<H2xII", buf)
+            if not flag or utype != m.ITEM_UNIT_TYPE:
+                return 0
+            return unit_id
+        except Exception:
+            return 0
 
     # ------------------------------------------------------- calibration scan
     def scan_item_codes(self) -> dict:

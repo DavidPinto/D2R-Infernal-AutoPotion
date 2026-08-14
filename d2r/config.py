@@ -11,6 +11,8 @@ import os
 import sys
 from dataclasses import dataclass, field, asdict
 
+from .models import BELT_COLUMN_KEYS
+
 if getattr(sys, "frozen", False):
     # Packaged exe: store config next to the executable so it persists.
     _base = os.path.dirname(os.path.abspath(sys.executable))
@@ -110,6 +112,20 @@ DEFAULTS = {
     #   {"potions": [[txt, kind, grade], ...], "merc": [int, ...], "notes": str}
     "combos": {},
     "combo": "",
+    # Belt columns (Q/W/E/R) the app may drink from and refill into.  Unchecked
+    # columns are left alone entirely (the user manages those manually).
+    "managed": ["Q", "W", "E", "R"],
+    # Belt refill: while the inventory panel is open the app moves a matching
+    # potion from the inventory into the first empty managed belt slot.
+    # "calibrated" means click positions were measured against the live window.
+    "refill": {
+        "enabled": False,
+        "calibrated": False,
+        "cell": 29.0,
+        "origin_x": 0.0,
+        "origin_y": 0.0,
+        "interval_ms": 400,
+    },
 }
 
 
@@ -126,6 +142,8 @@ class AppConfig:
     # Named game version/mods combos + the active combo name ("" = built-in).
     combos: dict = field(default_factory=dict)
     combo: str = ""
+    managed: list = field(default_factory=lambda: list(DEFAULTS["managed"]))
+    refill: dict = field(default_factory=lambda: dict(DEFAULTS["refill"]))
 
     # ----------------------------------------------------------- accessors
     # All accessors fall back to the factory default if a key is missing from
@@ -159,6 +177,46 @@ class AppConfig:
     @enabled.setter
     def enabled(self, value: bool) -> None:
         self.behavior["enabled"] = bool(value)
+
+    # ------------------------------------------------- belt columns + refill
+    def managed_columns(self) -> list[str]:
+        """Belt column keys the app may manage (never empty; always valid keys)."""
+        valid = {k: i for i, k in enumerate(BELT_COLUMN_KEYS)}
+        kept = [k for k in self.managed if k in valid]
+        return kept or list(BELT_COLUMN_KEYS)
+
+    def managed_indices(self) -> set[int]:
+        valid = {k: i for i, k in enumerate(BELT_COLUMN_KEYS)}
+        return {valid[k] for k in self.managed_columns()}
+
+    def set_managed_columns(self, keys) -> None:
+        valid = set(BELT_COLUMN_KEYS)
+        self.managed = [k for k in keys if k in valid] or list(BELT_COLUMN_KEYS)
+
+    def refill_enabled(self) -> bool:
+        return bool(self.refill.get("enabled", False))
+
+    def set_refill_enabled(self, value: bool) -> None:
+        self.refill["enabled"] = bool(value)
+
+    def refill_interval(self) -> float:
+        return float(self.refill.get("interval_ms", 400)) / 1000.0
+
+    def refill_mapping(self) -> dict:
+        """Click-position mapping (client-relative origin + cell size)."""
+        return dict(self.refill)
+
+    def set_refill_mapping(self, cell: float, origin_x: float, origin_y: float) -> None:
+        self.refill["cell"] = float(cell)
+        self.refill["origin_x"] = float(origin_x)
+        self.refill["origin_y"] = float(origin_y)
+        self.refill["calibrated"] = True
+
+    def clear_refill_mapping(self) -> None:
+        self.refill["calibrated"] = False
+        self.refill["cell"] = float(DEFAULTS["refill"]["cell"])
+        self.refill["origin_x"] = 0.0
+        self.refill["origin_y"] = 0.0
 
     # ------------------------------------------------------------- persist
     def save(self) -> None:
@@ -194,6 +252,10 @@ class AppConfig:
                 if isinstance(v, dict) and k
             }
             cfg.combo = str(data.get("combo", ""))
+            cfg.managed = [k for k in data.get("managed", []) if isinstance(k, str)]
+            refill = data.get("refill")
+            if isinstance(refill, dict):
+                cfg.refill.update({k: v for k, v in refill.items()})
             return cfg
         except Exception:
             return cls()
@@ -206,6 +268,8 @@ class AppConfig:
         self.behavior = dict(DEFAULTS["behavior"])
         self.combos = dict(DEFAULTS["combos"])
         self.combo = ""
+        self.managed = list(DEFAULTS["managed"])
+        self.refill = dict(DEFAULTS["refill"])
 
     # ------------------------------------------------------------- profiles
     PROFILE_SECTIONS = ("thresholds", "cooldowns", "keys", "max_override")
