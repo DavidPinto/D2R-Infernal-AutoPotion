@@ -54,36 +54,41 @@ HOTKEY_PRESETS = [
 
 _potion_labels = {"heal": "heal", "mana": "mana", "rejuv": "rejuv", "other": "other"}
 
-# Grade dropdown labels per potion family (Calibrate tab).  Index in the list
-# is the numeric grade; "other" is a utility potion (grade -1).
-_CALIB_GRADES = {
-    "heal": ["minor", "light", "greater", "super", "full"],
-    "mana": ["minor", "light", "greater", "super", "full"],
-    "rejuv": ["rejuv", "full rejuv"],
-    "other": ["utility"],
-}
+# Guided-calibration wizard: the potion choices a user can place in belt corners.
+# The app reads the corner slots, finds the txtFileNo code that appears in all of
+# them, and saves it as that potion — no code-typing required.
+_WIZARD_POTIONS = [
+    ("Minor Health potion", "heal", 0),
+    ("Light Health potion", "heal", 1),
+    ("Greater Health potion", "heal", 2),
+    ("Super Health potion", "heal", 3),
+    ("Full Health potion", "heal", 4),
+    ("Minor Mana potion", "mana", 0),
+    ("Light Mana potion", "mana", 1),
+    ("Greater Mana potion", "mana", 2),
+    ("Super Mana potion", "mana", 3),
+    ("Full Mana potion", "mana", 4),
+    ("Rejuvenation potion", "rejuv", 0),
+    ("Full Rejuvenation potion", "rejuv", 1),
+]
+
+# The wizard auto-saves into this combo name (no naming step for the user).
+_CALIB_COMBO = "Calibrated build"
 
 _CALIB_INSTRUCTIONS = (
-    "The app identifies potions by their base-item txtFileNo code, and these "
-    "codes change between game versions / mods (the Infernal Edition renumbered "
-    "classic D2R by +15).  If your potions show as 'other' on the Dashboard, or "
-    "you play a different version/mods, teach the app the codes here:\n\n"
-    "1. Go in-game and open your belt/inventory.  Place a potion you KNOW (e.g. "
-    "Minor Mana / Minor Health - available from the start) in a belt corner.\n"
-    "2. Click 'Scan belt & inventory' and find that potion's txtFileNo in the "
-    "list (e.g. slot x=0 (Q, bottom) -> txt=608 = Light Mana on Infernal).\n"
-    "3. In the table, set the row's Kind + Grade to match, and enter that "
-    "txtFileNo number.\n"
-    "4. Repeat for every potion you use (heal grades, mana grades, rejuv, and "
-    "utility).  Anything not listed is treated as 'other' and never pressed.\n"
-    "5. Give the combo a name (e.g. \"Infernal 3.0.91636\") and click "
-    "'Save as combo'.  The app switches to it immediately.\n\n"
-    "Player/merc offsets match the Go reference build and are found by "
-    "signature scan, so they normally need no calibration.  The one item-specific "
-    "value besides potions is your hireling's txtFileNo (default 338/271): if the "
-    "Dashboard shows 'no merc' while one is hired, set it from the Diagnostics "
-    "monster-table dump.  If player/merc values ever read wrong, run the "
-    "Diagnostics scan - it pinpoints exactly which signature failed."
+    "Potions are identified by an internal code that changes between game "
+    "versions and mods.  Calibrate once — the app finds the codes itself and "
+    "remembers them forever.\n\n"
+    "1. In-game, put ONE potion you can identify (Minor Health or Minor Mana — "
+    "available from the start) in ALL 4 corners of your belt.\n"
+    "2. Pick that same potion in the list and click 'Scan belt corners'.\n"
+    "3. The app reads the belt slots in memory, finds the code automatically, "
+    "saves it, and fills in the rest of its family (Minor→Full) when the codes "
+    "are consecutive, as in D2R.\n"
+    "4. Repeat for any other potion you use, then play.  It's stored in your "
+    "settings and never needs calibrating again — not even after a restart.\n\n"
+    "The app locates the belt and inventory slots in game memory itself; you "
+    "only place potions.  No addresses, no code numbers to type."
 )
 
 
@@ -695,173 +700,77 @@ class MainApp(ctk.CTk):
 
     # ---------------------------------------------------------- calibrate
     def _build_calibrate(self, parent):
-        """Tab where users teach the app their build's potion txtFileNo codes.
-
-        Each named combo maps potion kinds/grades to txtFileNo numbers; the
-        active combo is what the reader classifies against."""
+        """Guided-calibration wizard: the user places a known potion in the belt
+        corners, the app reads the corner slot codes itself, infers the family
+        and saves it into the "_CALIB_COMBO" combo (persisted, auto-active)."""
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=4, pady=4)
 
-        w.heading(scroll, "Game version / mods combo").pack(anchor="w", padx=12, pady=(10, 4))
+        w.heading(scroll, "Saved profiles").pack(anchor="w", padx=12, pady=(10, 4))
         combo_row = ctk.CTkFrame(scroll, fg_color="transparent")
         combo_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
-        ctk.CTkLabel(combo_row, text="Combo name:").pack(side="left")
-        self._combo_entry = ctk.CTkEntry(combo_row, width=170, height=28)
-        self._combo_entry.pack(side="left", padx=(6, 0))
-        ctk.CTkLabel(combo_row, text="Notes:").pack(side="left", padx=(10, 0))
-        self._combo_notes_entry = ctk.CTkEntry(combo_row, width=240, height=28)
-        self._combo_notes_entry.pack(side="left", padx=(6, 0))
-        ctk.CTkButton(combo_row, text="Save as combo", width=120, height=28,
-                      command=self._save_combo).pack(side="left", padx=(10, 0))
-
-        combo_row2 = ctk.CTkFrame(scroll, fg_color="transparent")
-        combo_row2.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
-        ctk.CTkLabel(combo_row2, text="Active:").pack(side="left")
-        self._combo_menu = ctk.CTkOptionMenu(combo_row2, values=[""], width=220, height=28)
+        ctk.CTkLabel(combo_row, text="Active profile:").pack(side="left")
+        self._combo_menu = ctk.CTkOptionMenu(combo_row, values=[""], width=220, height=28)
         self._combo_menu.set("")
         self._combo_menu.pack(side="left", padx=(6, 0))
-        ctk.CTkButton(combo_row2, text="Apply", width=70, height=28,
+        ctk.CTkButton(combo_row, text="Use", width=60, height=28,
                       command=self._apply_combo).pack(side="left", padx=(6, 0))
-        ctk.CTkButton(combo_row2, text="Load into editor", width=130, height=28,
-                      command=self._load_combo_into_editor).pack(side="left", padx=(6, 0))
-        ctk.CTkButton(combo_row2, text="Delete", width=70, height=28,
+        ctk.CTkButton(combo_row, text="Delete", width=70, height=28,
                       fg_color="#7a4a4a", hover_color="#8c5555",
                       command=self._delete_combo).pack(side="left", padx=(6, 0))
-        ctk.CTkButton(combo_row2, text="Reset to built-in defaults", width=180, height=28,
-                      fg_color="#444", hover_color="#555",
-                      command=self._reset_codes).pack(side="left", padx=(6, 0))
         self._combo_state = ctk.CTkLabel(scroll, text="", text_color="gray70",
                                          font=ctk.CTkFont(size=11))
         self._combo_state.pack(anchor="w", padx=12, pady=(2, 6))
 
-        w.heading(scroll, "Potion txtFileNo codes").pack(anchor="w", padx=12, pady=(4, 4))
-        self._calib_rows: list[dict] = []
-        self._calib_table = ctk.CTkFrame(scroll, fg_color="transparent")
-        self._calib_table.pack(anchor="w", padx=12, fill="x")
-        hdr = ctk.CTkFrame(self._calib_table, fg_color="transparent")
-        hdr.pack(anchor="w", fill="x")
-        ctk.CTkLabel(hdr, text="Kind", width=90, anchor="w",
-                     font=ctk.CTkFont(size=11, weight="bold")).pack(side="left")
-        ctk.CTkLabel(hdr, text="Grade", width=120, anchor="w",
-                     font=ctk.CTkFont(size=11, weight="bold")).pack(side="left", padx=(8, 0))
-        ctk.CTkLabel(hdr, text="txtFileNo", width=90, anchor="w",
-                     font=ctk.CTkFont(size=11, weight="bold")).pack(side="left", padx=(8, 0))
-        self._add_calib_row()
-        self._add_calib_row("mana")
-        self._add_calib_row("rejuv")
-        ctk.CTkButton(scroll, text="+ Add potion row", width=150, height=28,
-                      command=lambda: self._add_calib_row()).pack(anchor="w", padx=12, pady=(6, 2))
+        w.heading(scroll, "Teach the app your potions").pack(anchor="w", padx=12, pady=(4, 4))
+        calib_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        calib_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
+        ctk.CTkLabel(calib_row, text="Potion in the belt corners:").pack(side="left")
+        self._calib_potion_menu = ctk.CTkOptionMenu(
+            calib_row, values=[label for label, _, _ in _WIZARD_POTIONS], width=220, height=28)
+        self._calib_potion_menu.set(_WIZARD_POTIONS[0][0])
+        self._calib_potion_menu.pack(side="left", padx=(6, 0))
+        ctk.CTkButton(calib_row, text="Scan belt corners", width=140, height=28,
+                      command=self._wizard_scan).pack(side="left", padx=(8, 0))
+        self._calib_status = ctk.CTkLabel(scroll, text="", text_color="gray70",
+                                          font=ctk.CTkFont(size=11))
+        self._calib_status.pack(anchor="w", padx=12, pady=(2, 6))
 
         merc_row = ctk.CTkFrame(scroll, fg_color="transparent")
-        merc_row.pack(anchor="w", padx=12, fill="x", pady=(8, 2))
-        ctk.CTkLabel(merc_row, text="Merc hireling txtFileNo(s):").pack(side="left")
+        merc_row.pack(anchor="w", padx=12, fill="x", pady=(4, 2))
+        ctk.CTkLabel(merc_row, text="Merc hireling txtFileNo(s) (optional):").pack(side="left")
         self._calib_merc_entry = ctk.CTkEntry(merc_row, width=160, height=28)
         self._calib_merc_entry.pack(side="left", padx=(6, 0))
         w.hint(scroll, "Comma-separated (e.g. 271, 338). Only needed if the merc "
                        "reads as 'no merc'; find the id in Diagnostics.").pack(
                            anchor="w", padx=12, pady=(0, 8))
 
-        w.heading(scroll, "Find your codes (belt / inventory scan)").pack(
-            anchor="w", padx=12, pady=(6, 4))
-        scan_row = ctk.CTkFrame(scroll, fg_color="transparent")
-        scan_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
-        ctk.CTkButton(scan_row, text="Scan belt & inventory", width=170, height=28,
-                      command=self._scan_codes).pack(side="left")
-        ctk.CTkButton(scan_row, text="Clear", width=70, height=28, fg_color="#444",
-                      hover_color="#555", command=lambda: self._set_calib_scan("")).pack(
-                          side="left", padx=(6, 0))
-        self._calib_scan_box = ctk.CTkTextbox(scroll, height=130, wrap="none", font=ctk.CTkFont(family="Consolas", size=11))
-        self._calib_scan_box.pack(anchor="w", padx=12, fill="x", pady=(0, 6))
-        self._calib_scan_box.configure(state="disabled")
+        w.heading(scroll, "Learned so far").pack(anchor="w", padx=12, pady=(6, 2))
+        self._learned_label = ctk.CTkLabel(scroll, text="", justify="left", anchor="w",
+                                           font=ctk.CTkFont(size=12), wraplength=560)
+        self._learned_label.pack(anchor="w", padx=12, pady=(0, 4))
+        ctk.CTkButton(scroll, text="Clear calibration", width=140, height=28,
+                      fg_color="#7a4a4a", hover_color="#8c5555",
+                      command=self._clear_calibration).pack(anchor="w", padx=12, pady=(2, 4))
 
         w.heading(scroll, "Instructions").pack(anchor="w", padx=12, pady=(8, 4))
         w.hint(scroll, _CALIB_INSTRUCTIONS).pack(anchor="w", padx=12, pady=(0, 14))
 
         self._refresh_combo_menu()
         self._refresh_combo_state()
+        self._refresh_learned()
 
-    def _add_calib_row(self, kind: str = "heal", grade_label: str = "", txt: str = ""):
-        """Append a kind/grade/txt row to the potion table."""
-        frame = ctk.CTkFrame(self._calib_table, fg_color="transparent")
-        frame.pack(anchor="w", fill="x", pady=2)
-        kind_menu = ctk.CTkOptionMenu(frame, values=list(_CALIB_GRADES.keys()),
-                                      width=90, height=26)
-        kind_menu.set(kind)
-        kind_menu.pack(side="left")
-        grades = _CALIB_GRADES[kind]
-        grade_menu = ctk.CTkOptionMenu(frame, values=grades, width=120, height=26)
-        grade_menu.set(grade_label if grade_label in grades else grades[0])
-        grade_menu.pack(side="left", padx=(8, 0))
-        txt_entry = ctk.CTkEntry(frame, width=90, justify="center")
-        txt_entry.insert(0, txt)
-        txt_entry.pack(side="left", padx=(8, 0))
-        remove_btn = ctk.CTkButton(frame, text="✕", width=30, height=26, fg_color="#7a4a4a",
-                                   hover_color="#8c5555")
-        remove_btn.pack(side="left", padx=(8, 0))
-        row = {"kind": kind_menu, "grade": grade_menu, "txt": txt_entry,
-               "frame": frame, "remove": remove_btn}
-        kind_menu.configure(command=lambda k, r=row: self._on_calib_kind(r, k))
-        remove_btn.configure(command=lambda r=row: self._remove_calib_row(r))
-        self._calib_rows.append(row)
-        if len(self._calib_rows) > 1:
-            remove_btn.configure(state="normal")
-
-    def _on_calib_kind(self, row: dict, kind: str):
-        """Refit a row's grade dropdown when its kind changes."""
-        grades = _CALIB_GRADES[kind]
-        menu = row["grade"]
-        menu.configure(values=grades)
-        menu.set(grades[0] if menu.get() not in grades else menu.get())
-
-    def _remove_calib_row(self, row: dict):
-        """Delete a potion row (keep at least one)."""
-        if len(self._calib_rows) <= 1:
-            return
-        self._calib_rows.remove(row)
-        row["frame"].destroy()
-
-    def _collect_calib_potions(self) -> list:
-        """Read the editor table as [[txt, kind, grade], ...] (invalid rows skip)."""
-        rows = []
-        for row in self._calib_rows:
-            kind = row["kind"].get()
-            grade_label = row["grade"].get()
+    def _active_combo_potion_txts(self) -> set:
+        """txtFileNos already learned in the active combo (never the defaults)."""
+        body = self.config.combos.get(self.config.combo)
+        rows = body.get("potions", []) if body else []
+        out = set()
+        for row in rows:
             try:
-                txt = int(row["txt"].get().strip())
-            except ValueError:
-                continue
-            if kind == "other":
-                grade = -1
-            else:
-                grades = _CALIB_GRADES[kind]
-                grade = grades.index(grade_label) if grade_label in grades else 0
-            rows.append([txt, kind, grade])
-        return rows
-
-    def _load_combo_into_editor(self):
-        """Populate the table + merc field from the combo selected in the menu."""
-        body = self.config.combos.get(self._combo_menu.get())
-        if not body:
-            self._emit_log("Select a saved combo first.", "error")
-            return
-        for row in list(self._calib_rows):
-            self._remove_calib_row(row)
-        for p in body.get("potions", []):
-            try:
-                txt, kind, grade = int(p[0]), str(p[1]), int(p[2])
+                out.add(int(row[0]))
             except (TypeError, ValueError, IndexError):
                 continue
-            if kind in _CALIB_GRADES:
-                grades = _CALIB_GRADES[kind]
-                label = "utility" if kind == "other" else (
-                    grades[grade] if 0 <= grade < len(grades) else grades[0])
-                self._add_calib_row(kind, label, str(txt))
-        merc = ", ".join(str(v) for v in body.get("merc", []))
-        self._calib_merc_entry.delete(0, "end")
-        self._calib_merc_entry.insert(0, merc)
-        self._combo_notes_entry.delete(0, "end")
-        self._combo_notes_entry.insert(0, str(body.get("notes", "")))
-        self._emit_log(f"Combo '{self._combo_menu.get()}' loaded into the editor.", "info")
+        return out
 
     def _parse_merc_ids(self) -> list:
         """Parse the merc txtFileNo field into a list of ints (empty ok)."""
@@ -873,18 +782,37 @@ class MainApp(ctk.CTk):
                 continue
         return out
 
-    def _save_combo(self):
-        """Save the editor contents as a named combo and switch to it."""
-        name = self._combo_entry.get().strip()
-        if not name:
-            self._emit_log("Enter a combo name first.", "error")
+    def _learn_potion(self, kind: str, anchor_txt: int, anchor_grade: int):
+        """Infer the potion family from the anchor code and persist the result
+        into the wizard's combo (auto-active, so the reader re-arms instantly)."""
+        new_entries = m.infer_potion_family(kind, anchor_txt, anchor_grade,
+                                            existing=self._active_combo_potion_txts())
+        if not new_entries:
+            self._emit_log(f"'{kind}' already learned — nothing new to save.", "info")
             return
-        self.config.save_combo(name, self._collect_calib_potions(),
-                               self._parse_merc_ids(), self._combo_notes_entry.get().strip())
+        body = self.config.combos.get(self.config.combo) or {}
+        rows = [[e.txt, e.kind, e.grade] for e in new_entries]
+        rows.extend(body.get("potions", []))
+        merc = self._parse_merc_ids() or body.get("merc", [])
+        self.config.save_combo(_CALIB_COMBO, rows, merc, body.get("notes", ""))
         self._apply_codes_to_reader()
         self._refresh_combo_menu()
         self._refresh_combo_state()
-        self._emit_log(f"Combo '{name}' saved and active.", "info")
+        self._refresh_learned()
+        names = ", ".join(str(e.txt) for e in new_entries)
+        self._emit_log(f"Learned '{kind}' codes: {names} (saved to "
+                       f"'{_CALIB_COMBO}', now active).", "info")
+
+    def _clear_calibration(self):
+        """Delete the wizard's combo and fall back to the built-in defaults."""
+        self.config.delete_combo(_CALIB_COMBO)
+        self._calib_merc_entry.delete(0, "end")
+        self._apply_codes_to_reader()
+        self._refresh_combo_menu()
+        self._refresh_combo_state()
+        self._refresh_learned()
+        self._set_calib_status("")
+        self._emit_log("Calibration cleared — back to built-in potion defaults.", "info")
 
     def _apply_combo(self):
         """Switch to the combo selected in the dropdown."""
@@ -909,18 +837,6 @@ class MainApp(ctk.CTk):
         self._refresh_combo_state()
         self._emit_log(f"Combo '{name}' deleted.", "info")
 
-    def _reset_codes(self):
-        """Return to the built-in Infernal potion table."""
-        self.config.set_active_combo("")
-        self._apply_codes_to_reader()
-        for row in list(self._calib_rows):
-            self._remove_calib_row(row)
-        self._calib_merc_entry.delete(0, "end")
-        self._combo_notes_entry.delete(0, "end")
-        self._refresh_combo_menu()
-        self._refresh_combo_state()
-        self._emit_log("Back to built-in potion defaults.", "info")
-
     def _apply_codes_to_reader(self):
         """Push the active combo's codes into the live reader (no reconnect)."""
         if self.reader is not None:
@@ -940,47 +856,57 @@ class MainApp(ctk.CTk):
         else:
             self._combo_state.configure(text="Using built-in Infernal potion defaults.")
 
-    def _scan_codes(self):
-        """Scan belt/inventory txtFileNos in the background (never freezes UI)."""
+    def _wizard_scan(self):
+        """Read the belt corner slots in the background (never freezes UI)."""
         if not self.reader:
             self._emit_log("Connect to the game first, then scan.", "error")
             return
-        self._set_calib_scan("Scanning… (stay in a game)")
-        threading.Thread(target=self._do_scan_codes, daemon=True).start()
+        self._set_calib_status("Scanning belt corners… (stay in a game)")
+        threading.Thread(target=self._do_wizard_scan, daemon=True).start()
 
-    def _do_scan_codes(self):
+    def _do_wizard_scan(self):
         data = self.reader.scan_item_codes()
-        lines = ["Belt slots (x = belt slot index; column = x%4, bottom row x<4, top row x>=4):", ""]
-        if data["ok"]:
-            for e in sorted(data["belt"], key=lambda e: e.get("x", -1)):
-                x = e.get("x", -1)
-                key = m.BELT_COLUMN_KEYS[x % 4] if x >= 0 else "?"
-                row = "top" if x >= 4 else "bottom"
-                lines.append(f"  x={x}  {key}/{row}  txt={e['txt']}")
-            if not data["belt"]:
-                lines.append("  (no potions on the belt right now)")
-            lines.append("")
-            lines.append("Inventory (txtFileNo -> count):")
-            if data["inventory"]:
-                for txt, count in sorted(data["inventory"].items()):
-                    lines.append(f"  {txt} -> {count}")
-            else:
-                lines.append("  (nothing owned in the personal inventory)")
-        elif data["error"]:
-            lines.append(f"Scan failed: {data['error']}")
-        else:
-            lines.append("Item table unreadable - are you in a game?")
-        lines.append("")
-        lines.append("Hint: place a KNOWN potion (e.g. Minor Mana) in a belt corner,"
-                     " scan, then enter its txt above.")
-        text = "\n".join(lines)
-        self.after(0, lambda: self._set_calib_scan(text))
+        slots = {e["x"]: e["txt"] for e in data.get("belt", []) if e.get("x", -1) >= 0}
+        self.after(0, lambda: self._finish_wizard_scan(slots, data.get("error")))
 
-    def _set_calib_scan(self, text: str):
-        self._calib_scan_box.configure(state="normal")
-        self._calib_scan_box.delete("1.0", "end")
-        self._calib_scan_box.insert("end", text)
-        self._calib_scan_box.configure(state="disabled")
+    def _finish_wizard_scan(self, slots: dict, error: str | None):
+        if error:
+            self._set_calib_status(f"Scan failed: {error}")
+            return
+        code = m.corner_potion_code(slots)
+        if code is None:
+            detail = ", ".join(f"x{k}:{v}" for k, v in sorted(slots.items())) or "none"
+            self._set_calib_status(
+                "Could not find a single code in all 4 belt corners "
+                f"(read: {detail}). Place one potion in every corner slot and retry.")
+            return
+        label, kind, grade = self._selected_wizard_potion()
+        self._set_calib_status(
+            f"Found txtFileNo {code} in all 4 corners — that matches "
+            f"'{label}'. Saving…")
+        self._learn_potion(kind, code, grade)
+
+    def _selected_wizard_potion(self):
+        label = self._calib_potion_menu.get()
+        for item in _WIZARD_POTIONS:
+            if item[0] == label:
+                return item
+        return _WIZARD_POTIONS[0]
+
+    def _set_calib_status(self, text: str):
+        self._calib_status.configure(text=text)
+
+    def _refresh_learned(self):
+        """Show the active combo's potion table as plain text (or the defaults)."""
+        codes = self.config.potion_codes()
+        if not codes.entries:
+            self._learned_label.configure(
+                text="Nothing learned yet — follow the steps below to teach the app "
+                     "your build's codes.")
+            return
+        lines = [f"{txt} = {e.kind}" + ("" if e.grade < 0 else f" ({codes.grade_names(e.kind)[e.grade]})")
+                 for txt, e in sorted(codes.entries.items())]
+        self._learned_label.configure(text="  " + "\n  ".join(lines))
 
     # --------------------------------------------------------- diagnostics
     def _build_diagnostics(self, parent):

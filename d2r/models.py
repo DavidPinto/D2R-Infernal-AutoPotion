@@ -228,6 +228,45 @@ def default_potion_codes() -> PotionCodes:
     return PotionCodes(entries)
 
 
+def belt_corner_codes(slots: dict) -> set[int]:
+    """txtFileNos sitting in the belt *corner* slots (the edge slots of every
+    row: column 0 and column 3).  Used by the calibration wizard."""
+    return {txt for x, txt in slots.items() if x >= 0 and x % 4 in (0, 3)}
+
+
+def corner_potion_code(slots: dict) -> int | None:
+    """The single txtFileNo present in EVERY belt corner slot, else None.
+
+    The wizard asks the user to put one known potion in all corners; this is
+    what identifies that potion's code for the current build."""
+    corners = {x: txt for x, txt in slots.items() if x >= 0 and x % 4 in (0, 3)}
+    if len(corners) < 4:
+        return None
+    vals = set(corners.values())
+    return vals.pop() if len(vals) == 1 else None
+
+
+def infer_potion_family(kind: str, anchor_txt: int, anchor_grade: int,
+                        existing=()) -> list[PotionEntry]:
+    """Fill in a potion family's codes assuming they are consecutive (true for
+    classic D2R and the Infernal +15 renumber): anchoring e.g. Light Mana (608,
+    grade 1) yields Minor..Full Mana 607..611.  Codes already in ``existing`` are
+    never re-claimed.  Returns new PotionEntry objects."""
+    existing = set(existing)
+    if kind == "other":
+        return [] if anchor_txt in existing else [PotionEntry(anchor_txt, kind, -1)]
+    grades = POTION_GRADES.get(kind)
+    if not grades:
+        return []
+    base = anchor_txt - anchor_grade
+    out: list[PotionEntry] = []
+    for g in range(len(grades)):
+        t = base + g
+        if t > 0 and t not in existing:
+            out.append(PotionEntry(t, kind, g))
+    return out
+
+
 def potion_entries_from_lists(rows) -> list[PotionEntry]:
     """Build PotionEntry objects from persisted [[txt, kind, grade], ...] rows.
     Invalid rows are dropped; later rows override earlier ones for a txt."""

@@ -64,13 +64,16 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 ## Goals / tasks
 
 - **v1.3.0 Iteration 4 (user calibration) — in progress**:
-  end users can define a named "game version / mods" combo that teaches the app
-  the potion txtFileNo codes (and optional merc hireling txtFileNo) their build
-  uses, instead of relying on the built-in Infernal table.  New Calibrate tab:
-  guided instructions, potion kind+grade rows, belt/inventory code scanner
-  (place a known potion in a belt corner, scan, enter its txt), combos stored in
-  config, live apply (reader re-armed with the combo's codes), merc txtFileNo
-  field, Diagnostics reports the active combo's codes.
+  end users teach the app the potion txtFileNo codes (and optional merc
+  hireling txtFileNo) their build uses, instead of relying on the built-in
+  Infernal table.  New Calibrate tab is a **guided wizard**: the user places one
+  known potion (e.g. Minor Mana) in all 4 belt corners, picks it in a dropdown,
+  clicks "Scan belt corners" — the app reads the corner slot codes from game
+  memory itself (`corner_potion_code`), infers the whole consecutive family
+  (`infer_potion_family`), and saves it into an auto-active "Calibrated build"
+  profile persisted in config (`save_combo`); "Learned so far" preview + "Clear
+  calibration" fall back to built-ins; Diagnostics reports the active profile's
+  codes.  No code numbers or addresses are shown to the user.
 - **Done**: v1.0.0 baseline, v1.1.0 potion monitoring / profiles / presets / event log /
   session stats / global hotkey (landed 2026-08-14).
 - **Done (v1.2.0)**: Iteration 1 (user-customizable global hotkey, presets at
@@ -85,7 +88,10 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Build state
 
-- Version `1.3.0`. Test suite: 45 tests green (PotionCodes/combos coverage
-  added).  Belt + inventory + player + merc live-verified against pid 20048
-  (Sylus, Warlock 20) — belt decodes Q={Thawing, Light Mana}, R={Stamina,
-  Antidote}, W/E empty; inventory = Light/Mana Mana ×2 + Rejuv ×3.
+- Version `1.3.0`. Test suite: 47 tests green (PotionCodes/combos coverage +
+  wizard helpers `corner_potion_code`/`infer_potion_family`).  Belt + inventory +
+  player + merc live-verified against pid 20048 (Sylus, Warlock 20) — belt
+  corners {0:532, 3:528, 4:608, 7:529} (mixed, so the wizard's single-code
+  corner check correctly returns None until one potion fills all corners);
+  wizard round-trip (learn Light Mana 608 → 607..611 → save/reload/delete combo)
+  verified against a temp config.

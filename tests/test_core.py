@@ -227,6 +227,32 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual([(e.txt, e.kind, e.grade) for e in entries],
                          [(602, "heal", 0), (531, "rejuv", 1), (528, "other", -1)])
 
+    def test_corner_potion_code(self):
+        # 8-slot belt corners are x=0,3,4,7.
+        self.assertEqual(m.corner_potion_code({0: 608, 3: 608, 4: 608, 7: 608}), 608)
+        self.assertIsNone(m.corner_potion_code({0: 608, 3: 608, 4: 608, 7: 609}))
+        self.assertIsNone(m.corner_potion_code({0: 608, 4: 608}))        # too few corners
+        self.assertIsNone(m.corner_potion_code({}))                       # empty belt
+        # 12-slot belt corners: 0,3,4,7,8,11.
+        slots = {x: 608 for x in (0, 3, 4, 7, 8, 11)}
+        self.assertEqual(m.corner_potion_code(slots), 608)
+        self.assertEqual(m.belt_corner_codes({0: 1, 2: 5, 3: 2}), {1, 2})
+
+    def test_infer_potion_family(self):
+        fam = m.infer_potion_family("mana", 608, 1)   # Light Mana anchored
+        self.assertEqual({(e.txt, e.grade) for e in fam},
+                         {(607, 0), (608, 1), (609, 2), (610, 3), (611, 4)})
+        fam2 = m.infer_potion_family("heal", 602, 0)
+        self.assertEqual([e.txt for e in fam2], [602, 603, 604, 605, 606])
+        fam3 = m.infer_potion_family("rejuv", 531, 1)
+        self.assertEqual({(e.txt, e.grade) for e in fam3}, {(530, 0), (531, 1)})
+        # Already-learned codes are never re-claimed.
+        fam4 = m.infer_potion_family("mana", 608, 1, existing=[611])
+        self.assertNotIn(611, [e.txt for e in fam4])
+        # Utility potions are single entries.
+        fam5 = m.infer_potion_family("other", 512, -1)
+        self.assertEqual([(e.txt, e.kind, e.grade) for e in fam5], [(512, "other", -1)])
+
     def test_choose_belt_column_uses_custom_codes(self):
         codes = m.PotionCodes([m.PotionEntry(587, "heal", 0),
                                m.PotionEntry(588, "heal", 1)])

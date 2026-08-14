@@ -11,33 +11,37 @@ User calibration: end users can teach the app their build's potion codes.
 
 ### Added
 
-- **Calibrate tab**: a guided way to define a named *game version / mods* combo
-  that maps potion kinds/grades to the txtFileNo codes a given client build
-  actually uses (the Infernal Edition renumbered classic D2R by +15, and other
-  versions/mods renumber differently).
-- **Belt/inventory code scanner**: place a known potion (e.g. Minor Mana) in a
-  belt corner, click *Scan belt & inventory*, and the tool lists every belt slot
-  (x, column, row) and inventory txtFileNo so the matching code is easy to find.
-- **Potion table editor**: per-row Kind / Grade / txtFileNo entry (add/remove
-  rows), with restore amounts derived from kind+grade so custom codes behave
-  exactly like the built-in ones (minor 30 → full 100%, rejuv 35/100%).
-- **Named combos** persisted in `config/config.json` (`combos`): switchable,
-  deleteable, resettable to the built-in Infernal defaults; applies live to the
-  reader without a reconnect.
-- **Merc hireling txtFileNo override** per combo (default `338, 271`) for builds
-  whose hireling id differs — Diagnostics reports every monster txtFileNo so the
-  id is discoverable.
+- **Calibrate tab — guided calibration wizard**: instead of typing codes, the
+  user places ONE potion they can identify (e.g. Minor Health / Minor Mana) in
+  ALL 4 corners of their belt, picks that potion in a dropdown and clicks
+  *Scan belt corners*.  The app reads the belt slots in game memory itself,
+  finds the txtFileNo that appears in every corner, saves it, and auto-fills the
+  rest of that potion's family (Minor → Full) from the code gap — no code
+  numbers, no addresses.
+- **Learned-codes preview**: the Calibrate tab shows everything learned so far
+  (txtFileNo = kind/grade) and a *Clear calibration* button that falls back to
+  the built-in Infernal defaults.
+- **Named profiles persisted in `config/config.json`** (`combos`): the wizard
+  auto-saves into a "Calibrated build" profile that is active immediately and
+  survives restarts; *Use / Delete* switch or remove any saved profile.
+- **Merc hireling txtFileNo override** per profile (default `338, 271`) for
+  builds whose hireling id differs — Diagnostics reports every monster txtFileNo
+  so the id is discoverable.
 - Diagnostics now states whether the active potion table is custom or built-in
   and reports `kind` per item against the active codes.
 
 ### Changed
 
 - `GameReader` takes `codes` / `merc_txtfiles` (defaulting to the built-in
-  Infernal table + `338/271`); the UI passes the active combo.  Config grew
+  Infernal table + `338/271`); the UI passes the active profile.  Config grew
   `combo`/`combos` accessors (`potion_codes()`, `merc_txtfiles_set()`).
 - `PotionCounts.choose_belt_column` uses the active `PotionCodes` table instead
   of the hard-coded module constants (module-level `potion_kind/grade/restore`
   still mirror the built-in defaults).
+- New pure model helpers power the wizard: `belt_corner_codes()`,
+  `corner_potion_code()` (single code across all belt corners) and
+  `infer_potion_family()` (consecutive family fill, never re-claims codes that
+  are already learned).
 
 ## [1.2.0] - 2026-08-14
 

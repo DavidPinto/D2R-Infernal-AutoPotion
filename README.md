@@ -35,9 +35,10 @@ presses the correct belt keys for you.
   deficit — it won't burn a Full Rejuvenation when a Minor would do.
 - **Calibrate for your build.** Potions are identified by base-item `txtFileNo`
   codes, which differ between versions/mods (the Infernal Edition renumbers
-  classic D2R by +15).  The **Calibrate** tab teaches the app your build's codes
-  by scanning your belt/inventory while you place known potions, and saves them
-  as a named, switchable combo — no code edits needed.
+  classic D2R by +15).  The **Calibrate** tab reads the codes itself: put a known
+  potion in all 4 belt corners, press *Scan belt corners*, and the app learns and
+  remembers that potion (and its whole family) for your build — no code edits
+  needed.
 - **Full QWER belt support.** All four belt columns work; bind an action to
   multiple columns (`+` button on the *Keys* tab) and the right one is pressed
   per tick.  When the bound columns have no usable potion, the watcher skips
@@ -140,23 +141,22 @@ The app identifies potions by their base-item `txtFileNo` code.  These are
 **version/mods-specific** — the Infernal Edition renumbered the classic D2R item
 table by +15 (`587→602`, `593→608`, `515→530`, …), and other mods renumber
 differently.  If your potions show up as `other` on the Dashboard, or you run a
-different version, teach the app the correct codes on the **Calibrate** tab:
+different version, teach the app the correct codes with the **Calibrate** tab —
+no code numbers to type:
 
-1. Go in-game and open your belt/inventory.  Put a potion you *know* — e.g. a
-   **Minor Mana** or **Minor Health** potion, available from the start — in a
-   belt corner.
-2. Click **Scan belt & inventory**.  The tool lists every belt slot (`x`, column,
-   row) and inventory item with its `txtFileNo`.  Find the number of the potion
-   you placed (on Infernal: `x=0` (Q, bottom) → `608` = Light Mana).
-3. In the table, set that row's **Kind** + **Grade** and type the `txtFileNo`.
-4. Repeat for every potion you use.  Anything you don't list is treated as
-   `other` and never pressed.
-5. Name the combo (e.g. `Infernal 3.0.91636`) and click **Save as combo** — it
-   becomes active immediately and is stored in `config/config.json`.
+1. In-game, put ONE potion you can identify — e.g. a **Minor Mana** or **Minor
+   Health** potion, available from the start — in ALL 4 corners of your belt.
+2. Pick that same potion in the list and click **Scan belt corners**.  The app
+   reads the belt slots in memory itself, finds the code that appears in every
+   corner, saves it, and auto-fills the rest of that potion's family (Minor →
+   Full) from the code gap.
+3. Repeat for any other potion you use (rejuvenations, full grades, …).
+   Everything you've taught it is listed under **Learned so far**.
 
-Combos are switchable/deleteable and can be reset to the built-in Infernal
-defaults.  Restore amounts are derived from kind+grade, so custom codes get the
-same behavior as built-ins (minor 30 → full 100%, rejuv 35%/100%).
+Calibration is stored in `config/config.json` as a "Calibrated build" profile
+that stays active after a restart.  **Clear calibration** returns to the built-in
+Infernal defaults.  Restore amounts are derived from kind+grade, so custom codes
+get the same behavior as built-ins (minor 30 → full 100%, rejuv 35%/100%).
 
 **Player / merc offsets do NOT need calibration** — they match the Go reference
 build exactly (same `unit-hash-v3` signature and unit struct offsets) and are
