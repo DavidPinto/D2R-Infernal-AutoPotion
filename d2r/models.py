@@ -50,6 +50,62 @@ UNIT_TABLE_PLAYER_OFFSET = 0x0
 UNIT_TABLE_MONSTER_OFFSET = 0x400
 UNIT_TABLE_ITEM_OFFSET = 0x1000
 
+# --- Item unit structure offsets (item units share the unit layout) ----------
+# Ported from the Go reference (pkg/memory/item.go) and verified against the
+# same engine layout the unit reader already uses.  itemLoc is what tells us
+# whether an item sits in the belt (2) or the inventory (0).
+ITEM_OFFSET_TYPE = 0x00          # unit type; 4 == item
+ITEM_OFFSET_TXTFILE = 0x04       # base-item id (potion families live in a band)
+ITEM_OFFSET_UNIT_ID = 0x08
+ITEM_OFFSET_LOCATION = 0x0C      # 0 inv, 1 equipped, 2 belt, 3 ground, ...
+ITEM_OFFSET_UNIT_DATA = 0x10     # -> item data (owner, inv page, flags)
+ITEM_OFFSET_PATH = 0x38
+ITEM_OFFSET_STATSLISTEX = 0x88
+ITEM_OFFSET_NEXT = 0x150
+ITEM_OFFSET_IS_CORPSE = 0x1A6
+
+ITEM_UNIT_TYPE = 4
+ITEM_UNIT_DATA_OFFSET_OWNER = 0x0C
+ITEM_UNIT_DATA_OFFSET_INVPAGE = 0x55
+ITEM_UNIT_DATA_OFFSET_FLAGS = 0x18
+
+ITEM_LOC_INVENTORY = 0
+ITEM_LOC_EQUIPPED = 1
+ITEM_LOC_BELT = 2
+ITEM_LOC_GROUND = 3
+ITEM_LOC_CURSOR = 4
+ITEM_LOC_DROPPING = 5
+ITEM_LOC_SOCKET = 6
+
+# Belt potions bound to Q/W/E are the ones the watcher actually uses.
+POTION_SLOTS = ("heal", "mana", "rejuv")
+
+# Base-item txtFileNo bands for potions (D2R item-table indices, from the Go
+# reference item-name enum):
+#   587..591  Minor/Light/Healing/Greater/Super Healing Potion
+#   592..596  Minor/Light/Mana/Greater/Super Mana Potion
+#   515, 516   Rejuvenation / Full Rejuvenation Potion
+#   513, 514, 517  Stamina / Antidote / Thawing (not belt-drinkable by default)
+POTION_TXTFILE_HEAL = frozenset(range(587, 592))
+POTION_TXTFILE_MANA = frozenset(range(592, 597))
+POTION_TXTFILE_REJUV = frozenset({515, 516})
+POTION_TXTFILE_OTHER = frozenset({513, 514, 517})
+
+POTION_KIND_BY_TXTFILE: dict[int, str] = {}
+for _t in POTION_TXTFILE_HEAL:
+    POTION_KIND_BY_TXTFILE[_t] = "heal"
+for _t in POTION_TXTFILE_MANA:
+    POTION_KIND_BY_TXTFILE[_t] = "mana"
+for _t in POTION_TXTFILE_REJUV:
+    POTION_KIND_BY_TXTFILE[_t] = "rejuv"
+for _t in POTION_TXTFILE_OTHER:
+    POTION_KIND_BY_TXTFILE[_t] = "other"
+
+
+def potion_kind(txt_file: int) -> str | None:
+    """'heal' | 'mana' | 'rejuv' | 'other' for a potion txtFileNo, else None."""
+    return POTION_KIND_BY_TXTFILE.get(txt_file)
+
 # --- Structure offsets inside a unit (D2R 3.x client layout) -----------------
 # These are the engine struct offsets.  They are extremely stable across D2R
 # patches; only the *patterns* that locate the table base change.
@@ -107,6 +163,38 @@ BLOCKING_MENUS = {
 
 
 @dataclass
+class PotionCounts:
+    """How many drinkable potions are in the belt vs the personal inventory.
+
+    Keys are the POTION_SLOTS families plus "other" (utility potions that do not
+    map to a belt key).  ``ok`` is False when the item table could not be read
+    (offsets unresolved, or item struct not verified on a build)."""
+    belt: dict = field(default_factory=lambda: {k: 0 for k in ("heal", "mana", "rejuv", "other")})
+    inventory: dict = field(default_factory=lambda: {k: 0 for k in ("heal", "mana", "rejuv", "other")})
+    ok: bool = False
+
+    def belt_total(self) -> int:
+        return sum(self.belt.values())
+
+    def inventory_total(self) -> int:
+        return sum(self.inventory.values())
+
+    def fmt_belt(self) -> str:
+        if not self.ok:
+            return "unknown"
+        parts = [f"{self.belt.get(k, 0)} {k}" for k in POTION_SLOTS]
+        parts.append(f"{self.belt.get('other', 0)} other")
+        return "  ".join(parts)
+
+    def fmt_inventory(self) -> str:
+        if not self.ok:
+            return "unknown"
+        parts = [f"{self.inventory.get(k, 0)} {k}" for k in POTION_SLOTS]
+        parts.append(f"{self.inventory.get('other', 0)} other")
+        return "  ".join(parts)
+
+
+@dataclass
 class PlayerSnapshot:
     name: str = ""
     unit_id: int = 0
@@ -122,6 +210,7 @@ class PlayerSnapshot:
     merc_hp: int = 0
     merc_max_hp: int = 0
     merc_hp_percent: int = 0   # 0 == no merc
+    potion_counts: PotionCounts = field(default_factory=PotionCounts)
     menus_open: bool = False
     open_menu_names: list = field(default_factory=list)
     error: str = ""

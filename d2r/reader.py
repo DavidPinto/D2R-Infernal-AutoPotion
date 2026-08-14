@@ -219,6 +219,56 @@ class GameReader:
             life_disp = raw_life >> 8
         return life_disp, max_disp
 
+    # ------------------------------------------------------------- potions
+    def _read_item_counts(self) -> m.PotionCounts:
+        """Count belt + personal-inventory potions from the client item table.
+
+        Mirrors the location logic in the Go reference (pkg/memory/item.go):
+        itemLoc 2 == belt; itemLoc 0 == inventory only when the owner is the
+        local player, the item is on the inventory page (invPage 0) and not
+        flagged as vendor/trade.  Counts are best-effort: any unreadable frame
+        just reports ``ok=False`` instead of failing the snapshot."""
+        counts = m.PotionCounts()
+        if not self.offsets.UnitTable:
+            return counts
+        base = self._base()
+        table = base + self.offsets.UnitTable + m.UNIT_TABLE_ITEM_OFFSET
+
+        main_id = 0
+        pu, _ = self._find_player_unit()
+        if pu:
+            main_id = self.proc.read_u32(pu + m.UNIT_OFFSET_UNIT_ID)
+
+        buckets = self.proc.read_bytes(table, m.UNIT_TABLE_ENTRIES * 8)
+        if len(buckets) < m.UNIT_TABLE_ENTRIES * 8:
+            return counts
+        seen = 0
+        for i in range(m.UNIT_TABLE_ENTRIES):
+            unit = int.from_bytes(buckets[i * 8:i * 8 + 8], "little")
+            while unit and seen < 512:
+                seen += 1
+                # One batched read per item: header (type..unit-data) + next ptr.
+                buf = self.proc.read_bytes(unit, 0x160)
+                if len(buf) < 0x158:
+                    break
+                if int.from_bytes(buf[0x00:0x04], "little") == m.ITEM_UNIT_TYPE:
+                    kind = m.potion_kind(int.from_bytes(buf[0x04:0x08], "little"))
+                    if kind:
+                        loc = int.from_bytes(buf[0x0C:0x10], "little")
+                        if loc == m.ITEM_LOC_BELT:
+                            counts.belt[kind] += 1
+                        elif loc == m.ITEM_LOC_INVENTORY and main_id:
+                            ud = int.from_bytes(buf[0x10:0x18], "little")
+                            if ud:
+                                owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER)
+                                page = self.proc.read_u8(ud + m.ITEM_UNIT_DATA_OFFSET_INVPAGE)
+                                flags = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_FLAGS)
+                                if (owner == main_id and page == 0 and not (flags & 0x2000)):
+                                    counts.inventory[kind] += 1
+                unit = int.from_bytes(buf[0x150:0x158], "little")
+        counts.ok = seen > 0
+        return counts
+
     # -------------------------------------------------------------- menus
     def open_menus(self) -> dict:
         """Read the UI panel flags (inventory, stash, vendor, chat, ...).
@@ -295,6 +345,8 @@ class GameReader:
             snap.merc_hp = merc_hp
             snap.merc_max_hp = merc_max
             snap.merc_hp_percent = int(merc_hp / merc_max * 100) if merc_max else 0
+
+            snap.potion_counts = self._read_item_counts()
 
             if self.offsets.UI:
                 menus = self.open_menus()
@@ -499,4 +551,27 @@ class GameReader:
         menus = self.open_menus()
         open_now = [k for k, v in menus.items() if v]
         lines.append(f"  open        : {open_now if open_now else 'none'}")
+
+        lines.append("")
+        lines.append("=== Potions (belt / inventory) ===")
+        counts = self._read_item_counts()
+        if not counts.ok:
+            lines.append("  item table unreadable (offsets unresolved or not in a game)")
+        else:
+            lines.append(f"  belt      : {counts.fmt_belt()}")
+            lines.append(f"  inventory : {counts.fmt_inventory()}")
+            lines.append("  item units (txtFileNo, kind, loc, owner):")
+            table = self._base() + self.offsets.UnitTable + m.UNIT_TABLE_ITEM_OFFSET
+            dumped = 0
+            for i in range(m.UNIT_TABLE_ENTRIES):
+                u = self.proc.read_u64(table + i * 8)
+                while u and dumped < 30:
+                    dumped += 1
+                    if self.proc.read_u32(u + m.ITEM_OFFSET_TYPE) == m.ITEM_UNIT_TYPE:
+                        txt = self.proc.read_u32(u + m.ITEM_OFFSET_TXTFILE)
+                        loc = self.proc.read_u32(u + m.ITEM_OFFSET_LOCATION)
+                        ud = self.proc.read_ptr(u + m.ITEM_OFFSET_UNIT_DATA)
+                        owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
+                        lines.append(f"      txt={txt} kind={m.potion_kind(txt)} loc={loc} owner={owner}")
+                    u = self.proc.read_ptr(u + m.ITEM_OFFSET_NEXT)
         return lines

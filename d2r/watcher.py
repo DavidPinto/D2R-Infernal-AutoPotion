@@ -40,7 +40,8 @@ class PotionWatcher:
         self.reader = reader
         self.config = config
         self.on_event = on_event or (lambda e: None)
-        self.sender = KeySender(config, pid=getattr(reader.proc, "pid", None))
+        pid = getattr(getattr(reader, "proc", None), "pid", None)
+        self.sender = KeySender(config, pid=pid)
 
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -48,6 +49,12 @@ class PotionWatcher:
         self._lock = threading.Lock()
         self._last_snapshot = m.PlayerSnapshot()
         self._potion_uses = 0
+
+        # Session metrics (per-action counts, error count, first-tick timestamp).
+        self._counts: dict[str, int] = {k: 0 for k in ACTION_LABELS}
+        self._error_count = 0
+        self._started = time.monotonic()
+        self._last_action: Optional[tuple[str, float]] = None
 
         self.running = False
         self.error: Optional[str] = None
@@ -80,13 +87,48 @@ class PotionWatcher:
         with self._lock:
             return self._potion_uses
 
+    def counts(self) -> dict[str, int]:
+        """Per-action potion counts for this session (thread-safe copy)."""
+        with self._lock:
+            return dict(self._counts)
+
+    def error_count(self) -> int:
+        with self._lock:
+            return self._error_count
+
+    def uptime(self) -> float:
+        """Seconds since the watcher thread was created."""
+        return time.monotonic() - self._started
+
+    def last_action(self) -> Optional[tuple[str, float]]:
+        """Most recent (action, monotonic-time) potion use, or None."""
+        with self._lock:
+            return self._last_action
+
+    def stats(self) -> dict:
+        """Summary dict for the Dashboard stats row."""
+        with self._lock:
+            return {
+                "counts": dict(self._counts),
+                "total": self._potion_uses,
+                "errors": self._error_count,
+                "uptime": time.monotonic() - self._started,
+                "last_action": self._last_action,
+            }
+
     def _emit(self, kind: str, message: str, snap: m.PlayerSnapshot) -> None:
-        self.on_event(m.GameEvent(
-            kind=kind, message=message,
-            hp=snap.hp, mana=snap.mana,
-            hp_percent=snap.hp_percent, mana_percent=snap.mana_percent,
-            merc_percent=snap.merc_hp_percent, timestamp=time.time(),
-        ))
+        if kind == "error":
+            with self._lock:
+                self._error_count += 1
+        try:
+            self.on_event(m.GameEvent(
+                kind=kind, message=message,
+                hp=snap.hp, mana=snap.mana,
+                hp_percent=snap.hp_percent, mana_percent=snap.mana_percent,
+                merc_percent=snap.merc_hp_percent, timestamp=time.time(),
+            ))
+        except Exception:  # a consumer error must never kill the watcher loop
+            pass
 
     # ------------------------------------------------------------------ loop
     def _loop(self) -> None:
@@ -96,12 +138,12 @@ class PotionWatcher:
         thread (which previously froze the dashboard and stopped potions)."""
         self.running = True
         self.error = None
-        interval = max(50, int(self.config.behavior.get("poll_interval_ms", 150))) / 1000.0
         reported_connected = False
 
         while not self._stop.is_set():
             try:
                 started = time.monotonic()
+                interval = max(50, int(self.config.behavior.get("poll_interval_ms", 150))) / 1000.0
                 self.reader.max_override = self.config.max_override
                 snap = self.reader.snapshot()
 
@@ -175,10 +217,13 @@ class PotionWatcher:
     def _use(self, action: str, reason: str, snap: m.PlayerSnapshot) -> None:
         """Press the key for 'action' and log the outcome (success or UIPI-block)."""
         ok = self.sender.press(action)
-        self._last_used[action] = time.monotonic()
+        now = time.monotonic()
+        self._last_used[action] = now
         if ok:
             with self._lock:
                 self._potion_uses += 1
+                self._counts[action] = self._counts.get(action, 0) + 1
+                self._last_action = (action, now)
             self._emit(action, f"{ACTION_LABELS[action]} ({reason})", snap)
         else:
             self._emit("error", f"Key send FAILED for {ACTION_LABELS[action]} (check game is not running as admin / tool is not blocked).", snap)

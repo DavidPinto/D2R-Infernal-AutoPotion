@@ -10,16 +10,19 @@ Tabs:
 
 from __future__ import annotations
 
+import os
 import time
 import threading
 import customtkinter as ctk
 
 from d2r import __version__, models as m
-from d2r.config import AppConfig
+from d2r.config import AppConfig, PRESETS
 from d2r.process import Process, ProcessNotFound
 from d2r.reader import GameReader
 from d2r.watcher import PotionWatcher
 from d2r.keys import vk_name
+from d2r.log import EventLog
+from d2r.hotkey import HotkeyListener, parse_hotkey
 from ui import widgets as w
 
 ACCENT = "#2f80ed"
@@ -35,6 +38,19 @@ ACTION_NAMES = {
     "merc_heal": "Merc health (Shift)",
     "merc_rejuv": "Merc rejuv (Shift)",
 }
+
+# Compact per-action labels for the Dashboard stats row.
+ACTION_SHORT = {
+    "heal": "Hp", "mana": "Mp", "rejuv": "Rej",
+    "merc_heal": "MercHp", "merc_rejuv": "MercRej",
+}
+
+HOTKEY_PRESETS = [
+    "Disabled", "Ctrl+Alt+F9", "Ctrl+Alt+F10", "Ctrl+Alt+F11",
+    "Ctrl+Alt+F12", "Ctrl+Shift+F12", "Ctrl+Shift+E",
+]
+
+_potion_labels = {"heal": "heal", "mana": "mana", "rejuv": "rejuv", "other": "other"}
 
 
 class MainApp(ctk.CTk):
@@ -58,10 +74,16 @@ class MainApp(ctk.CTk):
         self._last_discover = 0.0
         self._shown_errors: set[str] = set()
 
+        self.event_log = EventLog()
+        self.hotkey: HotkeyListener | None = None
+
         self._build_topbar()
         self._build_tabs()
 
+        from d2r.config import CONFIG_PATH
+        self._emit_log(f"Auto Potion v{__version__} started. Config: {CONFIG_PATH}", "info")
         self._try_connect()
+        self._refresh_hotkey()
         self.after(150, self._poll)
 
     # ------------------------------------------------------------ top bar
@@ -91,7 +113,10 @@ class MainApp(ctk.CTk):
 
     def _set_status(self, text: str, color: str):
         # Always marshal widget updates to the main thread (called from threads).
-        self.after(0, lambda: self.status_pill.configure(text=text, fg_color=color))
+        try:
+            self.after(0, lambda: self.status_pill.configure(text=text, fg_color=color))
+        except Exception:
+            pass
 
     def _sync_enable_button(self):
         if self.config.enabled:
@@ -137,8 +162,24 @@ class MainApp(ctk.CTk):
         self.mp_name, self.mp_bar, self.mp_read = w.stat_bar(parent, "Mana", ACCENT)
         self.merc_name, self.merc_bar, self.merc_read = w.stat_bar(parent, "Mercenary", MERC)
 
+        # Potion supply (read from the client item table; read-only monitoring).
+        pot = ctk.CTkFrame(parent, fg_color="transparent")
+        pot.pack(anchor="w", padx=12, pady=(6, 0), fill="x")
+        ctk.CTkLabel(pot, text="Potion supply", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
+        self.potions_label = ctk.CTkLabel(pot, text="Belt: unknown   ·   Inventory: unknown",
+                                          text_color="gray70", justify="left",
+                                          font=ctk.CTkFont(size=11))
+        self.potions_label.pack(anchor="w", pady=(2, 0))
+
+        stats = ctk.CTkFrame(parent, fg_color="transparent")
+        stats.pack(anchor="w", padx=12, pady=(8, 0), fill="x")
+        ctk.CTkLabel(stats, text="Session", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
+        self.stats_label = ctk.CTkLabel(stats, text="uptime 0:00:00 · 0 potions · 0 errors",
+                                        text_color="gray70", font=ctk.CTkFont(size=11))
+        self.stats_label.pack(anchor="w", pady=(2, 0))
+
         self.uses_label = ctk.CTkLabel(parent, text="Potions used: 0", font=ctk.CTkFont(size=12))
-        self.uses_label.pack(anchor="w", padx=12, pady=(10, 0))
+        self.uses_label.pack(anchor="w", padx=12, pady=(6, 0))
 
         # Manual max-HP/MP override (calibration).  0 = auto (observed max).
         cal = ctk.CTkFrame(parent, fg_color="transparent")
@@ -192,13 +233,36 @@ class MainApp(ctk.CTk):
             self.merc_bar.set(0)
             self.merc_read.configure(text="no merc")
 
+        pc = snap.potion_counts
+        if pc.ok:
+            self.potions_label.configure(
+                text=f"Belt: {pc.fmt_belt()}\nInventory: {pc.fmt_inventory()}")
+        else:
+            self.potions_label.configure(
+                text="Belt: unknown   ·   Inventory: unknown (read in-game)")
+
         if self.watcher:
             self.uses_label.configure(text=f"Potions used: {self.watcher.potion_uses()}")
+            st = self.watcher.stats()
+            counts = "   ".join(
+                f"{ACTION_SHORT[a]}={n}" for a, n in st["counts"].items() if n)
+            up = st["uptime"]
+            uptime = f"{int(up // 3600)}:{int(up % 3600 // 60):02d}:{int(up % 60):02d}"
+            last = ""
+            if st["last_action"]:
+                a, ts = st["last_action"]
+                last = f"   ·   last: {ACTION_NAMES[a]} {max(0, int(time.monotonic() - ts))}s ago"
+            self.stats_label.configure(
+                text=f"uptime {uptime} · {st['total']} potions · {st['errors']} errors"
+                     + (f"   ({counts})" if counts else "") + last)
 
     # ----------------------------------------------------------- calibration
     def _emit_log(self, message: str, kind: str = "info"):
         """Queue a log line to the main thread (safe to call from anywhere)."""
-        self.after(0, self._log_event, m.GameEvent(kind=kind, message=message))
+        try:
+            self.after(0, self._log_event, m.GameEvent(kind=kind, message=message))
+        except Exception:
+            pass
 
     def _apply_max_override(self):
         """Read the Manual max fields, persist them, and let the reader use them."""
@@ -247,6 +311,42 @@ class MainApp(ctk.CTk):
         ctk.CTkButton(body, text="Reset to defaults", fg_color="#444",
                       hover_color="#555", command=self._reset_triggers).pack(anchor="w", padx=12, pady=14)
 
+        # --- one-click presets -----------------------------------------------
+        w.heading(body, "Presets").pack(anchor="w", padx=12, pady=(4, 2))
+        p_row = ctk.CTkFrame(body, fg_color="transparent")
+        p_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
+        preset_names = list(PRESETS.keys())
+        self._preset_menu = ctk.CTkOptionMenu(p_row, values=preset_names,
+                                              width=180, height=28)
+        self._preset_menu.set(preset_names[0] if preset_names else "")
+        self._preset_menu.pack(side="left")
+        ctk.CTkButton(p_row, text="Apply preset", width=110, height=28,
+                      command=self._apply_preset).pack(side="left", padx=(8, 0))
+        w.hint(body, "Presets set trigger thresholds/cooldowns only - keys, potion "
+                     "supply and manual maxes are untouched.").pack(anchor="w", padx=12, pady=(0, 8))
+
+        # --- named profiles ----------------------------------------------------
+        w.heading(body, "Profiles").pack(anchor="w", padx=12, pady=(4, 2))
+        prof_row = ctk.CTkFrame(body, fg_color="transparent")
+        prof_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
+        self._profile_entry = ctk.CTkEntry(prof_row, width=160, height=28,
+                                           placeholder_text="profile name")
+        self._profile_entry.pack(side="left")
+        ctk.CTkButton(prof_row, text="Save", width=64, height=28,
+                      command=self._save_profile).pack(side="left", padx=(6, 0))
+        self._profile_menu = ctk.CTkOptionMenu(prof_row, values=[""], width=180, height=28)
+        self._profile_menu.set("")
+        self._profile_menu.pack(side="left", padx=(6, 0))
+        ctk.CTkButton(prof_row, text="Load", width=64, height=28,
+                      command=self._load_profile).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(prof_row, text="Delete", width=64, height=28,
+                      fg_color="#7a4a4a", hover_color="#8c5555",
+                      command=self._delete_profile).pack(side="left", padx=(6, 0))
+        w.hint(body, "A profile stores every setting (thresholds, cooldowns, keys, "
+                     "manual maxes) under a name so you can switch characters/builds "
+                     "in one click.").pack(anchor="w", padx=12, pady=(0, 10))
+        self._refresh_profile_menu()
+
     def _on_threshold(self, key, value):
         self.config.thresholds[key] = int(round(value))
         self.config.save()
@@ -255,15 +355,67 @@ class MainApp(ctk.CTk):
         self.config.cooldowns[key] = round(float(value), 1)
         self.config.save()
 
-    def _reset_triggers(self):
-        from d2r.config import DEFAULTS
-        self.config.thresholds = dict(DEFAULTS["thresholds"])
-        self.config.cooldowns = dict(DEFAULTS["cooldowns"])
+    def _sync_sliders(self):
+        """Push config values into every trigger/cooldown slider."""
         for k, frame in self._trigger_sliders.items():
             frame.set_value(self.config.threshold(k))  # type: ignore[attr-defined]
         for k, frame in self._cooldown_sliders.items():
             frame.set_value(self.config.cooldown(k))  # type: ignore[attr-defined]
+
+    def _reset_triggers(self):
+        from d2r.config import DEFAULTS
+        self.config.thresholds = dict(DEFAULTS["thresholds"])
+        self.config.cooldowns = dict(DEFAULTS["cooldowns"])
+        self._sync_sliders()
         self.config.save()
+
+    # ------------------------------------------------------------ presets
+    def _apply_preset(self):
+        name = self._preset_menu.get()
+        if self.config.apply_preset(name):
+            self._sync_sliders()
+            self._emit_log(f"Preset '{name}' applied.", "info")
+
+    # ------------------------------------------------------------ profiles
+    def _refresh_profile_menu(self):
+        names = self.config.profile_names()
+        self._profile_menu.configure(values=names or [""])
+        self._profile_menu.set(self.config.profile if self.config.profile in names else "")
+
+    def _save_profile(self):
+        name = self._profile_entry.get().strip()
+        if not name:
+            self._emit_log("Enter a profile name first.", "error")
+            return
+        self.config.save_profile(name)
+        self._profile_entry.delete(0, "end")
+        self._refresh_profile_menu()
+        self._emit_log(f"Profile '{name}' saved.", "info")
+
+    def _load_profile(self):
+        name = self._profile_menu.get()
+        if not name:
+            self._emit_log("No profile selected to load.", "error")
+            return
+        if self.config.load_profile(name):
+            self._sync_sliders()
+            for a in self._key_buttons:
+                self._refresh_key_button(a)
+            for key, ent in self._max_entries.items():
+                ent.delete(0, "end")
+                ent.insert(0, str(self.config.max_override.get(key, 0)))
+            self._refresh_profile_menu()
+            self._emit_log(f"Profile '{name}' loaded.", "info")
+        else:
+            self._emit_log(f"Profile '{name}' not found.", "error")
+
+    def _delete_profile(self):
+        name = self._profile_menu.get()
+        if not name:
+            return
+        self.config.delete_profile(name)
+        self._refresh_profile_menu()
+        self._emit_log(f"Profile '{name}' deleted.", "info")
 
     # --------------------------------------------------------------- keys
     def _build_keys(self, parent):
@@ -299,6 +451,28 @@ class MainApp(ctk.CTk):
                                           command=self._on_pause)
         self._pause_switch.pack(anchor="w", padx=12, pady=4)
         self._pause_switch.select() if self.config.behavior.get("pause_when_menus_open", True) else self._pause_switch.deselect()
+
+        # Poll interval (responsiveness vs CPU).
+        self._poll_frame, _ = w.labeled_slider(
+            parent, "Watch refresh interval", 100, 500,
+            float(self.config.behavior.get("poll_interval_ms", 150)),
+            lambda v: self._on_poll_interval(v), step=50, fmt="{:.0f} ms")
+        self._poll_frame.pack(fill="x", padx=12, pady=(8, 2))
+
+        # Global arm/disarm hotkey.
+        hot = ctk.CTkFrame(parent, fg_color="transparent")
+        hot.pack(anchor="w", padx=12, pady=(8, 0), fill="x")
+        ctk.CTkLabel(hot, text="Global arm/disarm hotkey",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        self._hotkey_menu = ctk.CTkOptionMenu(hot, values=HOTKEY_PRESETS, width=160, height=28)
+        self._hotkey_menu.pack(side="left", padx=(10, 0))
+        self._hotkey_state = ctk.CTkLabel(hot, text="", font=ctk.CTkFont(size=11),
+                                          text_color=GOOD)
+        self._hotkey_state.pack(side="left", padx=(8, 0))
+        self._hotkey_menu.set(self.config.behavior.get("toggle_hotkey", "")
+                              or "Disabled")
+        self._hotkey_menu.configure(command=self._on_hotkey)
+        self._hotkey_state.bind("<Button-1>", lambda e: self._refresh_hotkey())
 
         ctk.CTkButton(parent, text="Reset to defaults", fg_color="#444",
                       hover_color="#555", command=self._reset_keys).pack(anchor="w", padx=12, pady=14)
@@ -359,6 +533,44 @@ class MainApp(ctk.CTk):
         self.config.behavior["pause_when_menus_open"] = bool(self._pause_switch.get())
         self.config.save()
 
+    def _on_poll_interval(self, value):
+        """Set the watcher refresh interval (live - applied next tick)."""
+        self.config.behavior["poll_interval_ms"] = int(round(value))
+        self.config.save()
+
+    # ------------------------------------------------------- global hotkey
+    def _on_hotkey(self, value):
+        """User picked a hotkey preset (or Disabled).  Re-register it."""
+        if value == "Disabled":
+            value = ""
+        self.config.behavior["toggle_hotkey"] = value
+        self.config.save()
+        self._refresh_hotkey()
+
+    def _refresh_hotkey(self):
+        """(Re)register the global arm/disarm hotkey from config."""
+        spec = self.config.behavior.get("toggle_hotkey", "")
+        self.hotkey = None
+        parsed = parse_hotkey(spec)
+        if not parsed:
+            self._hotkey_state.configure(text="off" if not spec else "invalid",
+                                         text_color="gray60")
+            return
+        mods, vk = parsed
+        listener = HotkeyListener(mods, vk, self._hotkey_toggle)
+        ok = listener.start()
+        if ok:
+            self.hotkey = listener
+            self._hotkey_state.configure(text="registered", text_color=GOOD)
+            self._emit_log(f"Global hotkey {spec} registered.", "info")
+        else:
+            self._hotkey_state.configure(text="failed (in use?)", text_color=DANGER)
+            self._emit_log(f"Could not register hotkey {spec} (already in use?).", "error")
+
+    def _hotkey_toggle(self):
+        """Global-hotkey callback: arm/disarm, marshalled to the main thread."""
+        self.after(0, self._toggle_enabled)
+
     def _reset_keys(self):
         """Restore default key bindings and behaviour switches."""
         from d2r.config import DEFAULTS
@@ -369,7 +581,10 @@ class MainApp(ctk.CTk):
         self._focus_switch.select() if self.config.behavior.get("auto_focus_game", True) else self._focus_switch.deselect()
         self._sound_switch.select() if self.config.behavior.get("sound", True) else self._sound_switch.deselect()
         self._pause_switch.select() if self.config.behavior.get("pause_when_menus_open", True) else self._pause_switch.deselect()
+        self._poll_frame.set_value(float(self.config.behavior.get("poll_interval_ms", 150)))
+        self._hotkey_menu.set(self.config.behavior.get("toggle_hotkey", "") or "Disabled")
         self.config.save()
+        self._refresh_hotkey()
 
     # --------------------------------------------------------- diagnostics
     def _build_diagnostics(self, parent):
@@ -431,16 +646,57 @@ class MainApp(ctk.CTk):
 
     # --------------------------------------------------------------- log
     def _build_log(self, parent):
+        bar = ctk.CTkFrame(parent, fg_color="transparent")
+        bar.pack(fill="x", padx=12, pady=(10, 4))
+        ctk.CTkButton(bar, text="Clear log", width=90, height=28,
+                      command=self._clear_log).pack(side="left")
+        ctk.CTkButton(bar, text="Export diagnostics", width=150, height=28,
+                      command=self._export_diagnostics).pack(side="left", padx=(8, 0))
+        self.log_hint = ctk.CTkLabel(
+            bar, text="", text_color="gray60", font=ctk.CTkFont(size=11))
+        self.log_hint.pack(side="left", padx=12)
         self.log_box = ctk.CTkTextbox(parent, wrap="word")
-        self.log_box.pack(fill="both", expand=True, padx=12, pady=12)
+        self.log_box.pack(fill="both", expand=True, padx=12, pady=(0, 12))
         self.log_box.configure(state="disabled")
+
+    def _clear_log(self):
+        self.log_box.configure(state="normal")
+        self.log_box.delete("1.0", "end")
+        self.log_box.configure(state="disabled")
+        self.event_log.clear()
+        self.log_hint.configure(text="Log cleared.")
+
+    def _export_diagnostics(self):
+        """Dump the current diagnostics report to a file next to the log."""
+        from d2r.config import CONFIG_DIR
+        path = os.path.join(CONFIG_DIR, "diagnostics.txt")
+        lines = ["D2R Infernal Auto Potion diagnostics export",
+                 f"generated: {time.strftime('%Y-%m-%d %H:%M:%S')}", ""]
+        try:
+            if self.reader is not None:
+                lines += self.reader.diagnose()
+            else:
+                lines.append("(not connected - no diagnostics available)")
+        except Exception as exc:
+            lines.append(f"(scan failed: {exc})")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines))
+            self.log_hint.configure(text=f"Saved to {path}")
+        except Exception:
+            self.log_hint.configure(text="Could not write diagnostics file.")
 
     def on_event(self, e: m.GameEvent):
         """Queue a GameEvent to be rendered by the UI.
 
         Must marshal to the main thread: this is invoked from the watcher
-        thread, and Tkinter/CustomTkinter must not be touched off it."""
-        self.after(0, self._log_event, e)
+        thread, and Tkinter/CustomTkinter must not be touched off it.  Guarded
+        so a window that is being torn down can never kill the watcher."""
+        try:
+            self.after(0, self._log_event, e)
+        except Exception:
+            pass
 
     def _log_event(self, e: m.GameEvent):
         """Append one event line to the Log tab (main thread only)."""
@@ -451,6 +707,7 @@ class MainApp(ctk.CTk):
             "info": "•", "error": "⚠", "status": "•",
         }.get(e.kind, "•")
         w.append_log(self.log_box, f"[{stamp}] {prefix} {e.message}")
+        self.event_log.append(e.kind, e.message, e.timestamp)
 
     # -------------------------------------------------------- connection
     def _reconnect(self):
@@ -539,9 +796,11 @@ class MainApp(ctk.CTk):
         self.after(150, self._poll)
 
     def _on_close(self):
-        """Stop the watcher thread before the window closes (clean exit)."""
+        """Stop the watcher thread + hotkey before the window closes (clean exit)."""
         if self.watcher:
             self.watcher.stop()
+        if self.hotkey:
+            self.hotkey.stop()
         self.destroy()
 
 

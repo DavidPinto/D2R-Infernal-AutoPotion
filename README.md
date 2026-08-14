@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit).  It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.0.0` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.1.0` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`.  See
 > [Limitations](#limitations) below.
 
@@ -27,6 +27,18 @@ presses the correct belt keys for you.
   bars, threshold + cooldown sliders, click-to-bind keys, a manual max-HP
   calibrator, and a **Diagnostics** tab that reads the live game state so you
   can verify (and we can fix) the offsets for a specific build.
+- **Potion monitoring.** The Dashboard shows live belt + inventory potion counts
+  (Healing / Mana / Rejuvenation / Other) read from the client's item table, so
+  you can see what's left without tabbing in.
+- **Profiles & presets.** Save/load named profiles, or apply one-click presets
+  (Leveling / Boss farming / Conservative / Mana-heavy) from the *Triggers*
+  tab.
+- **Persistent log & session stats.** Every event is appended to
+  `config/autopotion.log` (auto-rotated, survives restarts); the Dashboard
+  shows per-action potion counts, uptime, and errors for the current session.
+- **Optional global hotkey.** A system-wide toggle (Triggers tab) arms/disarms
+  the watcher from anywhere — even while the game is focused.  Disabled by
+  default.
 - **Safe by default.** Pauses while inventory / stash / vendor / menus are open,
   never presses keys outside a live game, tracks Battle Orders when computing
   HP/MP percentages, and defaults to **disarmed** — you arm it deliberately.
@@ -180,20 +192,26 @@ If an update changes `D2R.exe` so a signature no longer matches, the tool shows
 main.py                  entry point (+ --version)
 requirements.txt         customtkinter (numpy optional)
 main.spec / build.bat    PyInstaller onefile build
-config/config.json       persisted settings (auto-created)
+config/config.json       persisted settings + profiles (auto-created)
 d2r/
   version.py             __version__ (single source of truth)
   process.py             process discovery + ReadProcessMemory + pattern scan
   offsets.py             byte-pattern offset resolution (PATCH-SURVIVING)
-  reader.py              GameReader: player / merc / menus
+  reader.py              GameReader: player / merc / menus / potion counts
   models.py              stat/state/npc constants + snapshot types
   keys.py                SendInput key simulation (NO AutoHotkey)
-  watcher.py             auto-potion decision loop
-  config.py              persisted settings
+  watcher.py             auto-potion decision loop + session stats
+  config.py              persisted settings, profiles, presets
+  log.py                 persistent auto-rotating event log
+  hotkey.py              global toggle hotkey (RegisterHotKey)
 ui/
   app.py                 CustomTkinter main window
   widgets.py             reusable themed widgets
+tests/
+  test_core.py           stdlib unittest suite (no live game needed)
 ```
+
+Run the tests with `python -m unittest discover -s tests`.
 
 ## Disclaimer
 

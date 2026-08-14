@@ -5,6 +5,56 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-14
+
+QOL / automation / UX expansion.  Zero new third-party dependencies (stdlib +
+customtkinter only, same as before).
+
+### Added
+
+- **Potion monitoring** (Dashboard tab): live belt + inventory potion counts
+  (Healing / Mana / Rejuvenation / Other) read straight from the client's item
+  table.  Belt consumption is tracked as it happens.  Pure read-only
+  monitoring — the Python tool remains belt-key-press only.
+- **Config profiles**: save/load/delete named profiles from the Triggers tab
+  (settings persist in `config/config.json`).
+- **One-click presets**: `Leveling`, `Boss farming`, `Conservative`,
+  `Mana-heavy` (thresholds + cooldowns only; keys are never touched).
+- **Persistent event log**: every event is appended to `config/autopotion.log`
+  (256 KB, auto-rotated), so history survives restarts.
+- **Session stats** (Dashboard tab): potions pressed per action, uptime,
+  error count, and last action.
+- **Global toggle hotkey**: optional system-wide hotkey (Triggers tab) to
+  toggle the watcher on/off without focusing the UI; disabled by default.
+- **Tunable poll interval** (Keys tab): 100–500 ms slider to trade CPU for
+  responsiveness.
+- **Log tab**: Clear log + one-click export of a diagnostics bundle to
+  `config/diagnostics.txt`.
+- **Unit tests** (`tests/test_core.py`, stdlib `unittest`): config
+  presets/profiles, watcher decision logic + cooldowns, log rotation, potion
+  classification.  Run with `python -m unittest discover -s tests`.
+
+### Fixed
+
+- Watcher thread could be killed by a UI marshalling failure (`self.after` when
+  the Tk mainloop isn't running); all cross-thread callbacks are now guarded so
+  a UI hiccup can never stop potions.
+- Config accessors raised `KeyError` for unknown names (e.g. an old/corrupt
+  config); they now fall back to safe defaults (never trigger / no key spam /
+  unbound key).
+- Global hotkey registration: `DefWindowProcW` and friends had no ctypes
+  prototypes, so 64-bit `LPARAM` values silently overflowed `c_int` (exceptions
+  on every WM_NCCREATE); all Win32 prototypes are now declared explicitly.
+- Watcher no longer assumes the reader has a `proc` (testable without a live
+  game).
+
+### Changed
+
+- Default toggle hotkey is empty (`Disabled`) — the tool stays "safe by
+  default"; enable it in the Triggers tab.
+- The diagnostics item dump uses batched memory reads (one read per item
+  instead of one per field).
+
 ## [1.0.0] - 2026-08-13
 
 First publishable release.  Everything the tool needs to work on the target
