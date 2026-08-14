@@ -39,8 +39,15 @@ STATE_BATTLE_ORDERS = 32
 
 # --- NPC ids ----------------------------------------------------------------
 # The player's hired mercenary is the "Guard" unit (txtFileNo 338) in the
-# monster hash table.
+# monster hash table; 271 is the Infernal Edition (Warlock) hireling.
 NPC_GUARD = 338
+
+# Friendly hireling-type labels (the monster *name* is not readable as a plain
+# string on the client, so the type id is what we can show reliably).
+MERC_TYPE = {
+    271: "Warlock hireling",
+    338: "Guard",
+}
 
 # --- Unit hash-table layout --------------------------------------------------
 # The client keeps one hash table per unit type.  Each sub-table is 128 buckets
@@ -209,7 +216,10 @@ class PlayerSnapshot:
     mana_percent: int = 100
     merc_hp: int = 0
     merc_max_hp: int = 0
-    merc_hp_percent: int = 0   # 0 == no merc
+    merc_hp_percent: int = 0   # 0 == no merc (or dead)
+    merc_name: str = ""        # usually empty (monster names are not plain strings)
+    merc_type: str = ""        # friendly hireling type label
+    merc_level: int = 0
     potion_counts: PotionCounts = field(default_factory=PotionCounts)
     menus_open: bool = False
     open_menu_names: list = field(default_factory=list)
@@ -222,8 +232,8 @@ class PlayerSnapshot:
 
     @property
     def merc_alive(self) -> bool:
-        """True when a mercenary exists (a dead-but-hired merc still has a max)."""
-        return self.merc_max_hp > 0
+        """True when a mercenary is hired AND currently alive (dead merc: no waste)."""
+        return self.merc_max_hp > 0 and self.merc_hp > 0
 
 
 @dataclass

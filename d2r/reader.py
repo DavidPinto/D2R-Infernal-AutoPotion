@@ -35,6 +35,7 @@ class GameReader:
         # Running maxima so the HP/MP bars follow Battle-Orders boosts (Go logic).
         self._max_life = 0
         self._max_mana = 0
+        self._max_merc = 0
         # Manual max override (config "max_override"): when > 0 it is used directly
         # as the denominator so the % is correct even before the observed max latches.
         self.max_override = {"player_hp": 0, "player_mp": 0, "merc_hp": 0}
@@ -150,13 +151,14 @@ class GameReader:
     # Edition (Warlock) hireling.  Add more here if a different merc type is hired.
     MERC_TXTFILES = frozenset({338, 271})
 
-    def _read_merc_hp(self) -> tuple[int, int]:
-        """Mercenary (hp, max_hp) display values from the client monster table.
+    def _read_merc(self) -> dict | None:
+        """Read the mercenary unit, or None when no merc unit is in the world.
 
-        We match the hireling by its txtFileNo (stable across ticks, so the reading
-        does not jump between the merc and nearby enemies).  When no known id is
-        present we fall back to the nearest living unit that carries Life/MaxLife
-        stats (last resort only -- in a packed area that can be an enemy)."""
+        Returns dict with hp, max_hp, name, type, level.  The hireling is matched
+        by txtFileNo (stable across ticks).  A corpse unit keeps the stats, so a
+        dead-but-hired merc yields hp=0 rather than jumping to a nearby monster.
+        When no known hireling id is present we fall back to the nearest living
+        unit with Life/MaxLife stats (last resort only)."""
         base = self._base()
         table = base + self.offsets.UnitTable + m.UNIT_TABLE_MONSTER_OFFSET
 
@@ -167,25 +169,29 @@ class GameReader:
             px = self.proc.read_u16(ppath + m.PATH_OFFSET_X) if ppath else 0
             py = self.proc.read_u16(ppath + m.PATH_OFFSET_Y) if ppath else 0
 
-        matched_raw = None
+        matched = None      # (unit, raw_stats, txt)
+        matched_corpse = False
         best_raw = None
         best_dist = float("inf")
         for i in range(m.UNIT_TABLE_ENTRIES):
             unit = self.proc.read_u64(table + i * 8)
             while unit:
-                if self.proc.read_u8(unit + m.UNIT_OFFSET_IS_CORPSE):
-                    unit = self.proc.read_ptr(unit + m.UNIT_OFFSET_NEXT)
-                    continue
                 txt = self.proc.read_u32(unit + m.UNIT_OFFSET_TXTFILE)
+                is_corpse = self.proc.read_u8(unit + m.UNIT_OFFSET_IS_CORPSE) == 1
                 stats_list_ex = self.proc.read_ptr(unit + m.UNIT_OFFSET_STATSLISTEX)
                 sp = self.proc.read_ptr(stats_list_ex + m.STATSLIST_STAT_PTR) if stats_list_ex else 0
                 sc = self.proc.read_ptr(stats_list_ex + m.STATSLIST_STAT_COUNT) if stats_list_ex else 0
                 raw = self._read_stats(sp, sc)
                 has_life = m.STAT["Life"] in raw and m.STAT["MaxLife"] in raw
-                if txt in self.MERC_TXTFILES and matched_raw is None and has_life:
-                    matched_raw = raw
-                    break  # hireling identified; no need to keep scanning
-                if has_life:
+                if txt in self.MERC_TXTFILES and has_life:
+                    if matched is None:
+                        matched = (unit, raw, txt)
+                        matched_corpse = is_corpse
+                    if not is_corpse:
+                        break  # living hireling identified
+                    unit = self.proc.read_ptr(unit + m.UNIT_OFFSET_NEXT)
+                    continue
+                if has_life and not is_corpse:
                     upath = self.proc.read_ptr(unit + m.UNIT_OFFSET_PATH)
                     mx = self.proc.read_u16(upath + m.PATH_OFFSET_X) if upath else 0
                     my = self.proc.read_u16(upath + m.PATH_OFFSET_Y) if upath else 0
@@ -194,26 +200,44 @@ class GameReader:
                         best_dist = d
                         best_raw = raw
                 unit = self.proc.read_ptr(unit + m.UNIT_OFFSET_NEXT)
-            if matched_raw is not None:
+            if matched is not None and not matched_corpse:
                 break
-        raw = matched_raw if matched_raw is not None else best_raw
-        if raw is None:
-            return 0, 0
-        return self._merc_values(raw)
+        if matched is not None:
+            unit, raw, txt = matched
+        elif best_raw is not None:
+            unit, raw, txt = 0, best_raw, 0
+        else:
+            return None
+        hp, max_hp = self._merc_values(raw)
+        level = raw.get(m.STAT["Level"], 0)
+        name = ""
+        if unit:
+            ud = self.proc.read_ptr(unit + m.UNIT_OFFSET_UNIT_DATA)
+            name = self.proc.read_string(ud) if ud else ""
+        # Monster names are usually encoded (not plain strings); only keep a
+        # name that is clean printable ASCII so the UI never shows garbage.
+        if name and any(ord(c) < 32 or ord(c) > 126 for c in name):
+            name = ""
+        return {
+            "hp": hp, "max_hp": max_hp,
+            "name": name,
+            "type": m.MERC_TYPE.get(txt, f"Hireling ({txt})"),
+            "level": level,
+        }
 
     @staticmethod
     def _merc_values(raw: dict) -> tuple[int, int]:
         """Convert raw merc stats into (life_display, max_display).
 
-        MaxLife is stored shifted (<<8); Life below the 32768 shift boundary is
-        reported as a 0..1 fraction of max (a quirk of the engine), so it's
-        scaled back to a display value proportionally."""
+        MaxLife is stored shifted (<<8).  Life *below* 0x8000 is reported by the
+        engine as a 0..1 fraction of max (display values 0-127), so it is scaled
+        back proportionally; from 0x8000 up it is a plain shifted value (128+)."""
         raw_max = raw.get(m.STAT["MaxLife"], 0)
         max_disp = raw_max >> 8
         if max_disp <= 0:
             return 0, 0
         raw_life = raw.get(m.STAT["Life"], 0)
-        if raw_life <= 32768:
+        if raw_life < 32768:
             life_disp = int(raw_life / 32768.0 * max_disp)
         else:
             life_disp = raw_life >> 8
@@ -340,11 +364,19 @@ class GameReader:
             snap.max_mana = eff_max_mp
             snap.hp_percent = hp_pct
             snap.mana_percent = mp_pct
-            merc_hp, merc_max = self._read_merc_hp()
-            merc_max = self.max_override.get("merc_hp") or merc_max
-            snap.merc_hp = merc_hp
-            snap.merc_max_hp = merc_max
-            snap.merc_hp_percent = int(merc_hp / merc_max * 100) if merc_max else 0
+            merc = self._read_merc()
+            if merc is not None:
+                # Merc max also gets the gear-bonus treatment: the MaxLife stat is
+                # base-only, so track the running observed max (seeded by the stat
+                # and the current life) the same way we do for the player.
+                self._max_merc = max(self._max_merc, merc["max_hp"], merc["hp"])
+                eff_merc_max = self.max_override.get("merc_hp") or self._max_merc or 1
+                snap.merc_hp = merc["hp"]
+                snap.merc_max_hp = eff_merc_max
+                snap.merc_hp_percent = int(merc["hp"] / eff_merc_max * 100)
+                snap.merc_name = merc["name"]
+                snap.merc_type = merc["type"]
+                snap.merc_level = merc["level"]
 
             snap.potion_counts = self._read_item_counts()
 
@@ -542,9 +574,13 @@ class GameReader:
 
         lines.append("")
         lines.append("=== Mercenary read ===")
-        merc_hp, merc_max = self._read_merc_hp()
-        m_pct = int(merc_hp / merc_max * 100) if merc_max else 0
-        lines.append(f"  merc HP     : {merc_hp} / {merc_max} ({m_pct}%)")
+        merc = self._read_merc()
+        if merc is None:
+            lines.append("  merc        : not found (no hireling in the world / not hired)")
+        else:
+            m_pct = int(merc["hp"] / merc["max_hp"] * 100) if merc["max_hp"] else 0
+            lines.append(f"  merc HP     : {merc['hp']} / {merc['max_hp']} ({m_pct}%)")
+            lines.append(f"  merc type   : {merc['type']}   level: {merc['level']}   name: {merc['name']!r}")
 
         lines.append("")
         lines.append("=== Open menus ===")

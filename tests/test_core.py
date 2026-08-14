@@ -117,7 +117,26 @@ class ModelsTests(unittest.TestCase):
         self.assertTrue(s.alive)
         self.assertFalse(s.merc_alive)
         s.merc_max_hp = 50
+        self.assertFalse(s.merc_alive)   # hired but dead -> no potion waste
+        s.merc_hp = 30
         self.assertTrue(s.merc_alive)
+        s.merc_hp = 0
+        self.assertFalse(s.merc_alive)
+
+    def test_merc_values(self):
+        from d2r.reader import GameReader
+        STAT = m.STAT
+        # Normal shifted life.
+        raw = {STAT["Life"]: 128 << 8, STAT["MaxLife"]: 189 << 8}
+        self.assertEqual(GameReader._merc_values(raw), (128, 189))
+        # Life below the 32768 shift boundary is a 0..1 fraction of max.
+        raw2 = {STAT["Life"]: 16384, STAT["MaxLife"]: 100 << 8}
+        self.assertEqual(GameReader._merc_values(raw2), (50, 100))
+        # Dead merc (zero life) keeps its max.
+        raw3 = {STAT["Life"]: 0, STAT["MaxLife"]: 189 << 8}
+        self.assertEqual(GameReader._merc_values(raw3), (0, 189))
+        # No max -> no merc.
+        self.assertEqual(GameReader._merc_values({STAT["Life"]: 10}), (0, 0))
 
 
 class FakeSender:

@@ -185,6 +185,9 @@ class MainApp(ctk.CTk):
         self.hp_name, self.hp_bar, self.hp_read = w.stat_bar(parent, "Health", DANGER)
         self.mp_name, self.mp_bar, self.mp_read = w.stat_bar(parent, "Mana", ACCENT)
         self.merc_name, self.merc_bar, self.merc_read = w.stat_bar(parent, "Mercenary", MERC)
+        self.merc_info_label = ctk.CTkLabel(parent, text="", text_color="gray60",
+                                            font=ctk.CTkFont(size=11))
+        self.merc_info_label.pack(anchor="w", padx=12, pady=(0, 8))
 
         # Potion supply (read from the client item table; read-only monitoring).
         pot = ctk.CTkFrame(parent, fg_color="transparent")
@@ -249,13 +252,19 @@ class MainApp(ctk.CTk):
         self.mp_bar.configure(progress_color=w.color_for_percent(mp))
         self.mp_read.configure(text=f"{snap.mana}/{snap.max_mana}  ({mp}%)")
 
-        if snap.merc_alive:
+        if snap.merc_max_hp > 0:  # hired (alive, or dead but still hired)
             self.merc_bar.set(snap.merc_hp_percent / 100)
             self.merc_bar.configure(progress_color=w.color_for_percent(snap.merc_hp_percent))
-            self.merc_read.configure(text=f"{snap.merc_hp}/{snap.merc_max_hp}  ({snap.merc_hp_percent}%)")
+            dead = "  (dead)" if snap.merc_hp == 0 else ""
+            self.merc_read.configure(text=f"{snap.merc_hp}/{snap.merc_max_hp}  ({snap.merc_hp_percent}%){dead}")
+            info = " · ".join(x for x in (snap.merc_type, snap.merc_name,
+                                          f"Lvl {snap.merc_level}" if snap.merc_level else "")
+                              if x)
+            self.merc_info_label.configure(text=info if info else "Mercenary")
         else:
             self.merc_bar.set(0)
             self.merc_read.configure(text="no merc")
+            self.merc_info_label.configure(text="")
 
         pc = snap.potion_counts
         if pc.ok:
