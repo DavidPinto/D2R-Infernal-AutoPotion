@@ -117,6 +117,21 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(d.combo_names(), [])
         self.assertFalse(d.set_active_combo("Nope"))
 
+    def test_potion_margin_and_class_accessors(self):
+        c = cfg.AppConfig.load()
+        self.assertEqual(c.potion_margin(), 1.2)   # 20% default -> x1.2
+        self.assertEqual(c.potion_class(), "")     # auto-detect by default
+        c.behavior["potion_margin_percent"] = 50
+        self.assertEqual(c.potion_margin(), 1.5)
+        c.behavior["potion_margin_percent"] = -5
+        self.assertEqual(c.potion_margin(), 1.0)   # never below 1.0
+        c.behavior["potion_margin_percent"] = "bogus"
+        self.assertEqual(c.potion_margin(), 1.2)   # bad data falls back safely
+        c.behavior["potion_class_override"] = "Barbarian"
+        self.assertEqual(c.potion_class(), "Barbarian")
+        c.behavior["potion_class_override"] = "Nope"
+        self.assertEqual(c.potion_class(), "")
+
     def test_managed_columns_and_refill_accessors(self):
         c = cfg.AppConfig.load()
         self.assertEqual(c.managed_columns(), ["Q", "W", "E", "R"])
@@ -214,13 +229,50 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(m.potion_grade(530), 0)
         self.assertEqual(m.potion_grade(531), 1)
         self.assertEqual(m.potion_grade(1), -1)
-        self.assertEqual(m.potion_restore(602, 200), 30)
-        self.assertEqual(m.potion_restore(605, 200), 200)
-        self.assertEqual(m.potion_restore(606, 200), 200)   # full = 100% of max
-        self.assertEqual(m.potion_restore(608, 200), 60)
-        self.assertEqual(m.potion_restore(530, 200), 70)    # 35% of max
-        self.assertEqual(m.potion_restore(531, 200), 200)
+        # Module helper defaults to the middle class group (group 1).
+        self.assertEqual(m.potion_restore(602, 200), 45)   # Minor heal
+        self.assertEqual(m.potion_restore(605, 200), 270)  # Greater heal
+        self.assertEqual(m.potion_restore(606, 200), 480)  # Super heal (fixed, not 100%)
+        self.assertEqual(m.potion_restore(608, 200), 60)   # Light mana
+        self.assertEqual(m.potion_restore(530, 200), 70)   # rejuv 35% of max
+        self.assertEqual(m.potion_restore(531, 200), 200)  # full rejuv 100%
         self.assertEqual(m.potion_restore(1, 200), 0)
+
+    def test_potion_restore_is_class_dependent(self):
+        codes = m.default_potion_codes()
+        # Heal groups: 0 = Druid/Necro/Sorc/Warlock, 1 = mid, 2 = Barbarian.
+        self.assertEqual(codes.restore(602, 200, "Sorceress"), 30)
+        self.assertEqual(codes.restore(602, 200, "Amazon"), 45)
+        self.assertEqual(codes.restore(602, 200, "Barbarian"), 60)
+        self.assertEqual(codes.restore(606, 200, "Druid"), 320)
+        self.assertEqual(codes.restore(606, 200, "Barbarian"), 640)
+        # Mana groups: 0 = Barbarian, 1 = mid, 2 = Druid/Necro/Sorc/Warlock.
+        self.assertEqual(codes.restore(608, 200, "Barbarian"), 40)
+        self.assertEqual(codes.restore(608, 200, "Sorceress"), 80)
+        self.assertEqual(codes.restore(611, 200, "Warlock"), 500)
+        # Rejuv is class-independent and instant.
+        self.assertEqual(codes.restore(530, 200, "Barbarian"), 70)
+        self.assertEqual(codes.restore(531, 200, "Amazon"), 200)
+        self.assertEqual(codes.duration(530), 0.0)
+        self.assertEqual(codes.duration(531), 0.0)
+
+    def test_potion_durations(self):
+        codes = m.default_potion_codes()
+        self.assertAlmostEqual(codes.duration(602), 7.68)    # Minor heal
+        self.assertAlmostEqual(codes.duration(606), 10.24)   # Super heal
+        self.assertAlmostEqual(codes.duration(607), 5.12)    # Minor mana
+        self.assertAlmostEqual(codes.duration(611), 5.12)    # Super mana
+
+    def test_potion_codes_player_class_default(self):
+        codes = m.default_potion_codes()
+        codes.player_class = "Barbarian"
+        self.assertEqual(codes.restore(602, 200), 60)   # heal group 2
+        self.assertEqual(codes.restore(607, 200), 20)   # mana group 0
+        codes.player_class = "Sorceress"
+        self.assertEqual(codes.restore(602, 200), 30)   # heal group 0
+        self.assertEqual(codes.restore(607, 200), 40)   # mana group 2
+        codes.player_class = ""
+        self.assertEqual(codes.restore(602, 200), 45)   # unknown -> middle group
 
     def _col(self, key, txt, count=1):
         return m.BeltColumn(key=key, index=m.BELT_COLUMN_KEYS.index(key),
@@ -234,9 +286,9 @@ class ModelsTests(unittest.TestCase):
         return pc
 
     def test_choose_belt_column_smallest_covering(self):
-        # Minor (30) vs Super (200); deficit 40 -> Super covers, Minor does not.
+        # Minor (45, mid group) vs Super (270); deficit 50 -> Super covers, Minor not.
         pc = self._pc([self._col("Q", 602), self._col("R", 605)])
-        self.assertEqual(pc.choose_belt_column("heal", 40, 200), 3)
+        self.assertEqual(pc.choose_belt_column("heal", 50, 200), 3)
         # Deficit 20 -> both cover, pick the smallest grade (Q).
         self.assertEqual(pc.choose_belt_column("heal", 20, 200), 0)
 
@@ -274,12 +326,14 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(codes.kind(516), "rejuv")
         self.assertIsNone(codes.kind(602))     # not part of this table
         self.assertEqual(codes.grade(602), -1)
-        self.assertEqual(codes.restore(587, 200), 30)   # heal grade 0 -> 30 points
-        self.assertEqual(codes.restore(591, 200), 200)  # full heal -> 100%
+        # Custom tables use the same class-dependent restore model.
+        self.assertEqual(codes.restore(587, 200), 45)   # heal grade 0 -> 45 (mid group)
+        self.assertEqual(codes.restore(591, 200), 480)  # heal grade 4 -> Super 480
         self.assertEqual(codes.restore(515, 200), 70)   # rejuv 35% of max
         self.assertEqual(codes.restore(516, 200), 200)  # full rejuv
         self.assertEqual(codes.restore(512, 200), 0)    # utility
-        self.assertEqual(codes.grade_names("heal"), ["minor", "light", "greater", "super", "full"])
+        self.assertEqual(codes.grade_names("heal"), ["minor", "light", "healing", "greater", "super"])
+        self.assertEqual(codes.grade_names("mana"), ["minor", "light", "mana", "greater", "super"])
         self.assertEqual(codes.grade_names("rejuv"), ["rejuv", "full rejuv"])
         self.assertEqual(codes.grade_names("other"), ["utility"])
 
@@ -289,7 +343,7 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(codes.kind(611), "mana")
         self.assertEqual(codes.kind(530), "rejuv")
         self.assertEqual(codes.kind(532), "other")
-        self.assertEqual(codes.restore(605, 200), 200)
+        self.assertEqual(codes.restore(605, 200), 270)   # Greater heal, mid group
         self.assertEqual(codes.restore(608, 200), 60)
         self.assertEqual(codes.grade(606), 4)
 
@@ -381,7 +435,7 @@ class ModelsTests(unittest.TestCase):
         r = m.BeltColumn(key="R", index=3, txt=588, kind="heal", grade=1, count=1)
         pc = self._pc([q, r])
         pc.codes = codes
-        # 587 (30) vs 588 (60): a 50-deficit needs Light (R), 20 is covered by Q.
+        # 587 (45) vs 588 (90): a 50-deficit needs Light (R), 20 is covered by Q.
         self.assertEqual(pc.choose_belt_column("heal", 50, 200), 3)
         self.assertEqual(pc.choose_belt_column("heal", 20, 200), 0)
         # 602 is not in this custom table -> no candidate.
@@ -417,12 +471,16 @@ class ModelsTests(unittest.TestCase):
     def test_merc_values(self):
         from d2r.reader import GameReader
         STAT = m.STAT
-        # Normal shifted life.
+        # Full merc: Life is the fraction boundary exactly (0x8000 == 1.0), so it
+        # must read as full (the old "< 0x8000" check misread this as 128/189).
         raw = {STAT["Life"]: 128 << 8, STAT["MaxLife"]: 189 << 8}
-        self.assertEqual(GameReader._merc_values(raw), (128, 189))
-        # Life below the 32768 shift boundary is a 0..1 fraction of max.
+        self.assertEqual(GameReader._merc_values(raw), (189, 189))
+        # Life at/below the 32768 boundary is a 0..1 fraction of max.
         raw2 = {STAT["Life"]: 16384, STAT["MaxLife"]: 100 << 8}
         self.assertEqual(GameReader._merc_values(raw2), (50, 100))
+        # Above the boundary it is a plain shifted value.
+        raw4 = {STAT["Life"]: 150 << 8, STAT["MaxLife"]: 189 << 8}
+        self.assertEqual(GameReader._merc_values(raw4), (150, 189))
         # Dead merc (zero life) keeps its max.
         raw3 = {STAT["Life"]: 0, STAT["MaxLife"]: 189 << 8}
         self.assertEqual(GameReader._merc_values(raw3), (0, 189))
@@ -525,7 +583,7 @@ class RefillTests(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_plan_consume_rejuv_when_only_hp_low_and_no_covering_heal(self):
-        # Only a Minor heal (30) - does not cover the 150 deficit.
+        # Only a Minor heal (45) - does not cover the 150 deficit.
         pc = self._pc([self._col("Q", 602), self._col("R", 531)])
         acts, _ = self._consume(50, 200, 200, 200, pc)
         self.assertEqual(acts[0]["action"], "rejuv")
@@ -670,6 +728,7 @@ class FakeSender:
 
 class FakeReader:
     max_override = {"player_hp": 0, "player_mp": 0, "merc_hp": 0}
+    codes = m.default_potion_codes()
 
     def snapshot(self):
         return m.PlayerSnapshot()
@@ -763,6 +822,26 @@ class WatcherTests(unittest.TestCase):
         self.assertIsNotNone(st["last_action"])
         self.assertEqual(w.counts()["heal"], 1)
 
+    def test_derived_cooldown_from_potion_duration(self):
+        w = self._watcher()
+        w.config.keys["heal"] = ["Q", "R"]
+        # Super heal (606) restores over 10.24 s -> effective cooldown ~12.3 s.
+        snap = self._belt_snap(hp=140, columns=[self._col("Q", 602), self._col("R", 606)])
+        w._tick(snap)
+        self.assertAlmostEqual(w._last_potion_dur.get("heal", 0.0), 10.24)
+        self.assertGreaterEqual(w._effective_cooldown("heal"), 12.2)
+        # A second tick inside that window is gated: no weak-on-strong stacking.
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
+
+    def test_cooldown_fallbacks(self):
+        w = self._watcher()
+        # Rejuv is instant -> short fixed gate; unreadable belt -> config cooldown.
+        self.assertEqual(w._effective_cooldown("rejuv"), 1.0)
+        self.assertEqual(w._effective_cooldown("merc_rejuv"), 1.0)
+        self.assertEqual(w._effective_cooldown("heal"), w.config.cooldown("heal"))
+        self.assertEqual(w._effective_cooldown("merc_heal"), w.config.cooldown("merc_heal"))
+
     # ------------------------------------------------------- grade-aware
     def _col(self, key, txt, count=1):
         return m.BeltColumn(key=key, index=m.BELT_COLUMN_KEYS.index(key),
@@ -788,8 +867,8 @@ class WatcherTests(unittest.TestCase):
     def test_grade_picks_best_column(self):
         w = self._watcher()
         w.config.keys["heal"] = ["Q", "R"]   # 4th column now bound to heal
-        # Q = Minor (30), R = Super (200); deficit 40 -> R covers.
-        snap = self._belt_snap(hp=160, columns=[self._col("Q", 602), self._col("R", 605)])
+        # Q = Minor (45), R = Greater (270); deficit 60 -> R is the only cover.
+        snap = self._belt_snap(hp=140, columns=[self._col("Q", 602), self._col("R", 605)])
         w._tick(snap)
         self.assertEqual(w.sender.pressed, ["heal"])
         self.assertEqual(w.sender.pressed_keys, [("heal", "R")])

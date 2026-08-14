@@ -44,6 +44,9 @@ _ACTION_KIND = {
     "merc_heal": "heal", "merc_rejuv": "rejuv",
 }
 
+# Rejuvenation restores instantly, so it only needs a short anti-spam gate.
+_REJUV_COOLDOWN = 1.0
+
 
 class PotionWatcher:
     def __init__(self, reader: GameReader, config: AppConfig,
@@ -60,6 +63,9 @@ class PotionWatcher:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_used: dict[str, float] = {}
+        # Restore duration (seconds) of the potion most recently drunk per
+        # action; 0 = unknown (belt unreadable) -> fall back to config cooldown.
+        self._last_potion_dur: dict[str, float] = {}
         self._out_of_stock: set[str] = set()   # actions currently reported empty
         self._lock = threading.Lock()
         self._last_snapshot = m.PlayerSnapshot()
@@ -166,6 +172,11 @@ class PotionWatcher:
                 interval = max(50, int(self.config.behavior.get("poll_interval_ms", 150))) / 1000.0
                 self.reader.max_override = self.config.max_override
                 snap = self.reader.snapshot()
+                # A fixed class override replaces the auto-detected one; the
+                # reader already refreshed codes.player_class from the game.
+                override = self.config.potion_class()
+                if override:
+                    self.reader.codes.player_class = override
 
                 with self._lock:
                     self._last_snapshot = snap
@@ -318,7 +329,23 @@ class PotionWatcher:
 
     def _ready(self, action: str, now: float) -> bool:
         """True once this action's cooldown has elapsed since its last press."""
-        return now - self._last_used.get(action, 0.0) >= self.config.cooldown(action)
+        return now - self._last_used.get(action, 0.0) >= self._effective_cooldown(action)
+
+    def _effective_cooldown(self, action: str) -> float:
+        """Seconds before the same potion action may fire again.
+
+        Potions restore over a duration, so repeating before that duration (+ a
+        safety margin) passes would average the fill over the total time -
+        slower than the strong potion alone.  Therefore the cooldown is derived
+        from the potion actually drunk: duration x margin.  Rejuv is instant and
+        uses a short fixed gate.  Config cooldowns are the fallback while the
+        potion on the belt is unknown (plain tier / unreadable belt)."""
+        if action in ("rejuv", "merc_rejuv"):
+            return _REJUV_COOLDOWN
+        duration = self._last_potion_dur.get(action, 0.0)
+        if duration > 0:
+            return duration * self.config.potion_margin()
+        return self.config.cooldown(action)
 
     def _use(self, action: str, reason: str, snap: m.PlayerSnapshot,
              column: int | None = None) -> None:
@@ -330,6 +357,15 @@ class PotionWatcher:
         self._last_used[action] = now
         self._last_kind = _ACTION_KIND.get(action, "")
         if ok:
+            # Remember the drunk potion's restore duration so the derived
+            # cooldown (duration x margin) can prevent weak-on-strong stacking.
+            duration = 0.0
+            if column is not None and snap.potion_counts.ok:
+                col = next((c for c in snap.potion_counts.columns if c.index == column), None)
+                codes = getattr(self.reader, "codes", None)
+                if col is not None and col.txt and codes is not None:
+                    duration = codes.duration(col.txt)
+            self._last_potion_dur[action] = duration
             with self._lock:
                 self._potion_uses += 1
                 self._counts[action] = self._counts.get(action, 0) + 1

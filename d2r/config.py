@@ -98,6 +98,16 @@ DEFAULTS = {
         # (prefer a specific potion over a rejuv when only one stat is low) and
         # refill the belt per the layout/ratio plan below.
         "smart": True,
+        # Potions restore over a duration (rejuv is instant).  The app waits
+        # duration * (1 + margin) before drinking the same family again, which
+        # prevents stacking a weak potion on top of a strong one (two potions
+        # in a row average the fill over the total time, slower than the strong
+        # potion alone).  Config cooldowns are only a fallback while the potion
+        # on the belt is unknown.
+        "potion_margin_percent": 20,
+        # Character class used for potion restore amounts ("" = auto-detect the
+        # class from the game each tick; otherwise a fixed class from the list).
+        "potion_class_override": "",
         # Global hotkey that toggles arm/disarm while you are in-game.
         # Format "Ctrl+Alt+F12" / "Ctrl+Shift+F9"; "" = disabled (default).
         "toggle_hotkey": "",
@@ -228,6 +238,22 @@ class AppConfig:
         self.refill["cell"] = float(DEFAULTS["refill"]["cell"])
         self.refill["origin_x"] = 0.0
         self.refill["origin_y"] = 0.0
+
+    # ------------------------------------------------------- potion behaviour
+    def potion_margin(self) -> float:
+        """Multiplier (>= 1.0) applied to a potion's restore duration to derive
+        the effective cooldown; 20% default -> 1.2.  Falls back safely."""
+        pct = self.behavior.get("potion_margin_percent", 20)
+        try:
+            return max(1.0, 1.0 + float(pct) / 100.0)
+        except (TypeError, ValueError):
+            return 1.2
+
+    def potion_class(self) -> str:
+        """Fixed class override for potion amounts ("" = auto-detect in-game)."""
+        from . import models as mm
+        name = str(self.behavior.get("potion_class_override", "")).strip()
+        return name if name in mm.CLASS else ""
 
     # ------------------------------------------------------- smart belt plan
     def smart_enabled(self) -> bool:

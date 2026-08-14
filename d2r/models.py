@@ -42,11 +42,22 @@ STATE_BATTLE_ORDERS = 32
 # monster hash table; 271 is the Infernal Edition (Warlock) hireling.
 NPC_GUARD = 338
 
-# Friendly hireling-type labels (the monster *name* is not readable as a plain
-# string on the client, so the type id is what we can show reliably).
+# Friendly hireling-type labels by txtFileNo.  The monster *name* is not a plain
+# string on the client, so the type id is what we label the merc with (the real
+# name is read from the unit's UTF-16 name field when available).  271 is the
+# Infernal Edition Act 1 hireling (a Rogue - "Klaudia"), NOT a Warlock.
 MERC_TYPE = {
-    271: "Warlock hireling",
-    338: "Guard",
+    271: "Rogue Scout",
+    336: "Rogue Scout",       # classic Act 1
+    338: "Desert Mercenary",  # classic Act 2 (also the D2R guard default)
+    339: "Desert Mercenary",
+    340: "Desert Mercenary",
+    341: "Iron Wolf",         # classic Act 3
+    342: "Iron Wolf",
+    343: "Iron Wolf",
+    344: "Barbarian",         # classic Act 5
+    345: "Barbarian",
+    346: "Barbarian",
 }
 
 # --- Unit hash-table layout --------------------------------------------------
@@ -97,8 +108,8 @@ BELT_COLUMN_KEYS = ("Q", "W", "E", "R")
 # table by +15 (587 -> 602, 593 -> 608, 515 -> 530, ...).  The Go reference's
 # classic codes do NOT match this build; the reader only classifies potions it
 # actually sees, so a wrong band simply shows as "unknown" instead of crashing.
-#   602..606  Minor/Light/Greater/Super/Full Healing Potion
-#   607..611  Minor/Light/Greater/Super/Full Mana Potion
+#   602..606  Minor/Light/Healing/Greater/Super Healing Potion
+#   607..611  Minor/Light/Mana/Greater/Super Mana Potion
 #   530, 531  Rejuvenation / Full Rejuvenation Potion
 #   528, 529, 532  Stamina / Antidote / Thawing (drinkable, but not keyed)
 POTION_TXTFILE_HEAL = frozenset(range(602, 607))
@@ -130,21 +141,47 @@ POTION_GRADE_INDEX: dict[int, int] = {
     for grade, txt in enumerate(kinds)
 }
 
-# Restore amounts: fixed hit-points/mana for normal grades (classic D2 figures);
-# the "Full" grades restore 100% of the relevant maximum; rejuvenation potions
-# restore a percentage of BOTH life and mana.
-POTION_RESTORE_POINTS = {
-    602: 30, 603: 60, 604: 120, 605: 200,
-    607: 30, 608: 60, 609: 120, 610: 200,
-}
-POTION_RESTORE_PERCENT = {606: 100, 611: 100, 530: 35, 531: 100}
-
 # Restore semantics by (kind, grade), so user-calibrated codes get the correct
-# amounts without hard-coding each txtFileNo.
+# amounts without hard-coding each txtFileNo.  Potions restore over a duration
+# (rejuvenation is instant) and the total restored depends on BOTH the grade and
+# the drinking character's class group:
+#   heal groups: 0 = Druid/Necro/Sorc/Warlock, 1 = Amazon/Assassin/Paladin,
+#                2 = Barbarian
+#   mana groups: 0 = Barbarian, 1 = Amazon/Assassin/Paladin,
+#                2 = Druid/Necro/Sorc/Warlock
+# These are the real in-game figures (verified 2026).  The earlier hard-coded
+# 30/60/120/200 and the "grade 4 == Full heal, 100% of max" idea were wrong:
+# grade 4 is Super (320/480/640) and there is no "Full" heal/mana potion.
 POTION_KINDS = ("heal", "mana", "rejuv", "other")
-_GRADE_RESTORE_POINTS = (30, 60, 120, 200)   # grades 0..3 of heal/mana
-_FULL_GRADE_RESTORE_PERCENT = 100            # grade 4 (Full) of heal/mana
-_REJUV_RESTORE_PERCENT = (35, 100)           # rejuv grades
+# Each row: (duration_seconds, group0_restore, group1_restore, group2_restore).
+POTION_HEAL_TABLE = (
+    (7.68, 30, 45, 60),     # Minor Healing Potion
+    (6.40, 60, 90, 120),    # Light Healing Potion
+    (6.84, 100, 150, 200),  # Healing Potion
+    (7.68, 180, 270, 360),  # Greater Healing Potion
+    (10.24, 320, 480, 640), # Super Healing Potion
+)
+POTION_MANA_TABLE = (
+    (5.12, 20, 30, 40),     # Minor Mana Potion
+    (5.12, 40, 60, 80),     # Light Mana Potion
+    (5.12, 80, 120, 160),   # Mana Potion
+    (5.12, 150, 225, 300),  # Greater Mana Potion
+    (5.12, 250, 375, 500),  # Super Mana Potion
+)
+POTION_TABLES = {"heal": POTION_HEAL_TABLE, "mana": POTION_MANA_TABLE}
+# Character class -> restore group per family (used when a class is unknown ->
+# group 1, the middle column of the tables above).
+CLASS_HEAL_GROUP = {
+    "Amazon": 1, "Sorceress": 0, "Necromancer": 0, "Paladin": 1,
+    "Barbarian": 2, "Druid": 0, "Assassin": 1, "Warlock": 0,
+}
+CLASS_MANA_GROUP = {
+    "Amazon": 1, "Sorceress": 2, "Necromancer": 2, "Paladin": 1,
+    "Barbarian": 0, "Druid": 2, "Assassin": 1, "Warlock": 2,
+}
+CLASS_GROUPS = {"heal": CLASS_HEAL_GROUP, "mana": CLASS_MANA_GROUP}
+# Rejuvenation potions restore this % of max life AND max mana, instantly.
+REJUV_RESTORE_PERCENT = (35, 100)
 
 # Default hireling txtFileNos (player-owned NPC): 338 Guard (classic D2R),
 # 271 the Infernal Edition Warlock hireling.  Users can override per combo.
@@ -171,6 +208,9 @@ class PotionCodes:
         for e in entries or []:
             if e.kind in POTION_KINDS and (e.grade >= 0 or e.kind == "other"):
                 self.entries[e.txt] = e
+        # Class used for restore amounts when none is passed per call; the
+        # reader refreshes it from the player snapshot on every tick.
+        self.player_class: str = ""
 
     def kind(self, txt: int) -> str | None:
         e = self.entries.get(txt)
@@ -180,41 +220,53 @@ class PotionCodes:
         e = self.entries.get(txt)
         return e.grade if e else -1
 
-    def restore_points(self, txt: int) -> int:
+    def _group(self, kind: str, player_class: str) -> int:
+        """Restore group (0..2) for a kind; unknown class -> middle group."""
+        pc = (player_class or self.player_class or "")
+        return CLASS_GROUPS.get(kind, {}).get(pc, 1)
+
+    def restore(self, txt: int, max_value: int, player_class: str = "") -> int:
+        """HP/mana a potion restores in total (over its duration) at ``max_value``."""
         e = self.entries.get(txt)
         if not e:
             return 0
         if e.kind == "rejuv":
+            if 0 <= e.grade < len(REJUV_RESTORE_PERCENT):
+                return max(0, int(max_value * REJUV_RESTORE_PERCENT[e.grade] / 100))
             return 0
-        if 0 <= e.grade < len(_GRADE_RESTORE_POINTS):
-            return _GRADE_RESTORE_POINTS[e.grade]
+        row = POTION_TABLES.get(e.kind)
+        if row and 0 <= e.grade < len(row):
+            return row[e.grade][1 + self._group(e.kind, player_class)]
         return 0
 
-    def restore_percent(self, txt: int) -> int | None:
+    def duration(self, txt: int, player_class: str = "") -> float:
+        """Seconds a potion takes to deliver its restore (0.0 == instant)."""
         e = self.entries.get(txt)
-        if not e:
-            return None
-        if e.kind == "rejuv":
-            return _REJUV_RESTORE_PERCENT[e.grade] if 0 <= e.grade < len(_REJUV_RESTORE_PERCENT) else None
-        if e.grade == 4:
-            return _FULL_GRADE_RESTORE_PERCENT
-        return None
+        if not e or e.kind == "rejuv":
+            return 0.0
+        row = POTION_TABLES.get(e.kind)
+        if row and 0 <= e.grade < len(row):
+            return row[e.grade][0]
+        return 0.0
 
-    def restore(self, txt: int, max_value: int) -> int:
-        """Hit points / mana restored by a potion at a maximum of ``max_value``."""
-        pct = self.restore_percent(txt)
-        if pct is not None:
-            return max(0, int(max_value * pct / 100))
-        return self.restore_points(txt)
+    def restore_percent(self, txt: int) -> int | None:
+        """Percentage-of-max restore for rejuv grades; None for every other potion."""
+        e = self.entries.get(txt)
+        if not e or e.kind != "rejuv":
+            return None
+        if 0 <= e.grade < len(REJUV_RESTORE_PERCENT):
+            return REJUV_RESTORE_PERCENT[e.grade]
+        return None
 
     def grade_names(self, kind: str) -> list[str]:
         """Sorted potion grade labels for a kind (UI dropdowns)."""
         if kind == "other":
             return ["utility"]
-        labels = ["minor", "light", "greater", "super", "full"]
-        if kind == "rejuv":
-            labels = ["rejuv", "full rejuv"]
-        return labels
+        if kind == "heal":
+            return ["minor", "light", "healing", "greater", "super"]
+        if kind == "mana":
+            return ["minor", "light", "mana", "greater", "super"]
+        return ["rejuv", "full rejuv"]
 
 
 def default_potion_codes() -> PotionCodes:
@@ -355,11 +407,8 @@ def potion_grade(txt_file: int) -> int:
 
 
 def potion_restore(txt_file: int, max_value: int) -> int:
-    """Hit points / mana restored by a potion at a maximum of ``max_value``."""
-    pct = POTION_RESTORE_PERCENT.get(txt_file)
-    if pct is not None:
-        return max(0, int(max_value * pct / 100))
-    return POTION_RESTORE_POINTS.get(txt_file, 0)
+    """HP/mana a potion restores at ``max_value`` (default middle class group)."""
+    return default_potion_codes().restore(txt_file, max_value)
 
 
 @dataclass
@@ -382,6 +431,10 @@ class BeltColumn:
 UNIT_OFFSET_UNIT_ID = 0x08
 UNIT_OFFSET_TXTFILE = 0x04
 UNIT_OFFSET_UNIT_DATA = 0x10
+# UTF-16LE hireling/monster name pointer.  unit_data is a legacy ASCII/string
+# buffer for most units (read_string gives garbled names), so the wide name is
+# read first and unit_data is only a fallback.
+UNIT_OFFSET_NAME = 0x2C
 UNIT_OFFSET_PATH = 0x38
 UNIT_OFFSET_STATSLISTEX = 0x88
 UNIT_OFFSET_INVENTORY = 0x90

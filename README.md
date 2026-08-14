@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit).  It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.5.0` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.6.0` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`.  See
 > [Limitations](#limitations) below.
 
@@ -24,9 +24,10 @@ presses the correct belt keys for you.
   hardcoded addresses.  If a patch changes a signature, only `d2r/offsets.py`
   needs a new pattern.
 - **Modern UI.** Dark CustomTkinter interface with live HP / Mana / Mercenary
-  bars, threshold + cooldown sliders, click-to-bind keys, a manual max-HP
-  calibrator, and a **Diagnostics** tab that reads the live game state so you
-  can verify (and we can fix) the offsets for a specific build.
+  bars, threshold sliders + a real potion-values table and safety-margin slider,
+  click-to-bind keys, a manual max-HP calibrator, and a **Diagnostics** tab that
+  reads the live game state so you can verify (and we can fix) the offsets for a
+  specific build.
 - **Potion monitoring.** The Dashboard shows live belt + inventory potion counts
   (Healing / Mana / Rejuvenation / Other) read from the client's item table, so
   you can see what's left without tabbing in.
@@ -166,16 +167,43 @@ and how many slots are filled/free.
 
 ## Triggers (defaults)
 
-| Action               | Threshold            | Cooldown |
-|----------------------|----------------------|----------|
-| Health potion        | HP ≤ 80%             | 4 s      |
-| Mana potion          | MP ≤ 60%             | 5 s      |
-| Rejuvenation         | HP ≤ 40% **or** MP < 40% | 2 s  |
-| Merc health potion   | Merc HP ≤ 60%        | 6 s      |
-| Merc rejuv potion    | Merc HP ≤ 20%        | 2 s      |
+| Action               | Threshold            |
+|----------------------|----------------------|
+| Health potion        | HP ≤ 80%             |
+| Mana potion          | MP ≤ 60%             |
+| Rejuvenation         | HP ≤ 40% **or** MP < 40% |
+| Merc health potion   | Merc HP ≤ 60%        |
+| Merc rejuv potion    | Merc HP ≤ 20%        |
 
-All adjustable in the UI (*Triggers* tab).  Each action has a cooldown so it
-can't key-spam.
+All adjustable in the UI (*Triggers* tab).  The same tab shows the real potion
+values (per class), a character-class dropdown (or *Auto (detected)*), and a
+**Safety margin (%)** slider.
+
+### How potions actually work here
+
+Potions restore a class-dependent amount **over time** — they are not instant
+except rejuvenation.  The watcher never drinks a potion of the same kind again
+until its restore duration × the safety margin (default 20%) has passed, so a
+weak potion is never stacked on a strong one (two sips in a row would only
+average the fill and heal slower).  Per-class restore amounts:
+
+| Heal potion | Duration | Druid/Necro/Sorc/Warlock | Amazon/Assassin/Paladin | Barbarian |
+|-------------|----------|--------------------------|-------------------------|-----------|
+| Minor       | 7.68 s   | 30                       | 45                      | 60        |
+| Light       | 6.40 s   | 60                       | 90                      | 120       |
+| Healing     | 6.84 s   | 100                      | 150                     | 200       |
+| Greater     | 7.68 s   | 180                      | 270                     | 360       |
+| Super       | 10.24 s  | 320                      | 480                     | 640       |
+
+| Mana potion | Duration | Barbarian | Amazon/Assassin/Paladin | Druid/Necro/Sorc/Warlock |
+|-------------|----------|-----------|-------------------------|--------------------------|
+| Minor       | 5.12 s   | 20        | 30                      | 40                       |
+| Light       | 5.12 s   | 40        | 60                      | 80                       |
+| Mana        | 5.12 s   | 80        | 120                     | 160                      |
+| Greater     | 5.12 s   | 150       | 225                     | 300                      |
+| Super       | 5.12 s   | 250       | 375                     | 500                      |
+
+Rejuvenation restores **35%** of max HP+MP instantly (Full Rejuvenation 100%).
 
 ### Manual max-HP calibration
 

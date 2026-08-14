@@ -5,6 +5,66 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-08-14
+
+Corrected potion model (class-dependent restore amounts over a duration, no
+weak-on-strong stacking) and the mercenary health readout.
+
+### Changed
+
+- **Real potion model.** Potions restore a class-dependent amount over a
+  duration (per the game's column files), they no longer restore a flat point
+  value and nothing is "instant" except rejuvenation:
+  - Health: Minor 7.68 s, Light 6.40 s, Healing 6.84 s, Greater 7.68 s,
+    Super 10.24 s.  Restore per class group (Druid/Necro/Sorc/Warlock |
+    Amazon/Assassin/Paladin | Barbarian): Minor 30/45/60, Light 60/90/120,
+    Healing 100/150/200, Greater 180/270/360, Super 320/480/640.
+  - Mana: all 5.12 s.  Restore per class group (Barbarian |
+    Amazon/Assassin/Paladin | Druid/Necro/Sorc/Warlock): Minor 20/30/40,
+    Light 40/60/80, Mana 80/120/160, Greater 150/225/300, Super 250/375/500.
+  - Rejuvenation heals 35% of max HP+MP instantly; Full Rejuvenation 100%.
+    `606`/`611` are the **Super** grades (not "Full = 100%").
+  - The class is detected from the live character each snapshot; a fixed
+    override can be set (Triggers tab) for preview and drinking math.
+- **No weak-on-strong stacking.** The watcher now waits one potion's restore
+  duration × a safety margin (default 20 %) before drinking the same kind
+  again, so two quick sips can't average the fill.  Rejuv uses a short fixed
+  gate.  Config cooldowns are only a fallback while the belt potion is unknown.
+- **Triggers tab redesigned.** The raw per-action cooldown sliders are gone.
+  In their place: a character-class dropdown, a *Safety margin (%)* slider
+  (0–100), and a live potion-values table (grade, duration, restore for the
+  selected class).  Calibrate wizard labels corrected to the real grade names
+  (Minor/Light/Healing/Greater/Super).
+
+### Fixed
+
+- **Mercenary health readout.** The engine stores merc Life as a fraction of
+  max scaled to [0, 0x8000]; at full HP it is *exactly* 0x8000, which the old
+  boundary check misread as a shifted value → the merc always showed 128/189
+  (67%) at full health and ignored the gear bonus.  The fraction path now
+  triggers at `raw ≤ 32768`; percentages and max-HP-derived values are
+  correct, including at full health.
+- **Mercenary hireling info.** A living hireling now always wins over a corpse
+  found earlier in the unit list (dead mercs no longer shadow the real one),
+  the merc's UTF-16 name is read directly from the unit, the type map is
+  act-based (Rogue Scout / Desert Mercenary / Iron Wolf / Barbarian), and the
+  tracking state resets when the merc unit changes.
+- Class-aware potion restore is wired through the smart tier automatically
+  (the reader refreshes the shared `PotionCodes.player_class` every snapshot).
+
+### Added
+
+- `GameReader` merc snapshot exposes `raw_life` / `raw_max_life` / `unit_id`
+  and `UNIT_OFFSET_NAME`; Diagnostics dumps the raw merc life hex.
+- Config `behavior["potion_margin_percent"]` (default 20) and
+  `behavior["potion_class_override"]` ("" = auto), with safe accessors
+  `potion_margin()` and `potion_class()`.
+- `PotionCodes.duration(txt)` and class-aware `restore(txt, max_value,
+  player_class="")`; `process.read_wide_string()` for UTF-16 reads.
+- Unit tests for the class-dependent restore tables, potion durations,
+  derived-cooldown gating, the merc full-health boundary, and the config
+  accessors.
+
 ## [1.5.0] - 2026-08-14
 
 Improved auto potion (Iteration B: smart tier — belt plan + smart consume + layout/ratio refill).

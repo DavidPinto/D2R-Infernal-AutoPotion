@@ -326,6 +326,29 @@ class Process:
             chunk = min(chunk * 2, 64)
         return raw.split(b"\x00", 1)[0].decode("utf-8", "ignore")
 
+    def read_wide_string(self, address: int, size: int = 0) -> str:
+        """Read a NUL-terminated UTF-16LE string; with a fixed size, capped at
+        that (in bytes).  Unit names (hirelings, monsters) are wide strings, so
+        ``read_string`` (UTF-8) returns garbage for them."""
+        if size > 0:
+            raw = self.read_bytes(address, size)
+            if len(raw) < 2:
+                return ""
+            return raw.split(b"\x00\x00", 1)[0].decode("utf-16le", "ignore")
+        chunk = 64
+        raw = b""
+        while chunk <= 2048:
+            part = self.read_bytes(address + len(raw), chunk)
+            if not part:
+                break
+            raw += part
+            if b"\x00\x00" in part:
+                break
+            chunk = min(chunk * 2, 2048)
+        if len(raw) < 2:
+            return ""
+        return raw.split(b"\x00\x00", 1)[0].decode("utf-16le", "ignore")
+
     # --------------------------------------------------- module + patterns
     def _module_extent(self, base: int, size: int = 0) -> int:
         """Compute the real end address of a module image by walking regions

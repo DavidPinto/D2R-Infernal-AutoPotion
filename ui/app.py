@@ -2,7 +2,7 @@
 
 Tabs:
   Dashboard   - live HP / Mana / Merc bars, character info, arm/disarm toggle
-  Triggers    - threshold + cooldown sliders
+  Triggers    - thresholds + real potion timing/values + safety margin
   Keys        - belt-key bindings + behaviour switches
   Calibrate   - teach the app your build's potion txtFileNo codes (per version/mods)
   Diagnostics - offset scan + read sanity (the tool we use to verify 3.0.91636)
@@ -61,14 +61,14 @@ _potion_labels = {"heal": "heal", "mana": "mana", "rejuv": "rejuv", "other": "ot
 _WIZARD_POTIONS = [
     ("Minor Health potion", "heal", 0),
     ("Light Health potion", "heal", 1),
-    ("Greater Health potion", "heal", 2),
-    ("Super Health potion", "heal", 3),
-    ("Full Health potion", "heal", 4),
+    ("Healing Potion", "heal", 2),
+    ("Greater Health potion", "heal", 3),
+    ("Super Health potion", "heal", 4),
     ("Minor Mana potion", "mana", 0),
     ("Light Mana potion", "mana", 1),
-    ("Greater Mana potion", "mana", 2),
-    ("Super Mana potion", "mana", 3),
-    ("Full Mana potion", "mana", 4),
+    ("Mana Potion", "mana", 2),
+    ("Greater Mana potion", "mana", 3),
+    ("Super Mana potion", "mana", 4),
     ("Rejuvenation potion", "rejuv", 0),
     ("Full Rejuvenation potion", "rejuv", 1),
 ]
@@ -84,7 +84,7 @@ _CALIB_INSTRUCTIONS = (
     "available from the start) in ALL 4 corners of your belt.\n"
     "2. Pick that same potion in the list and click 'Scan belt corners'.\n"
     "3. The app reads the belt slots in memory, finds the code automatically, "
-    "saves it, and fills in the rest of its family (Minor→Full) when the codes "
+    "saves it, and fills in the rest of its family (Minor→Super) when the codes "
     "are consecutive, as in D2R.\n"
     "4. Repeat for any other potion you use, then play.\n\n"
 )
@@ -386,39 +386,94 @@ class MainApp(ctk.CTk):
             frame.pack(fill="x", padx=12, pady=2)
             self._trigger_sliders[key] = frame
 
-        w.heading(body, "Cooldowns (seconds)").pack(anchor="w", padx=12, pady=(14, 4))
-        self._cooldown_sliders: dict[str, object] = {}
-        for key, label in (("heal", "Health potion"), ("mana", "Mana potion"),
-                           ("rejuv", "Rejuv"), ("merc_heal", "Merc health"),
-                           ("merc_rejuv", "Merc rejuv")):
-            frame, _ = w.labeled_slider(
-                body, label, 0.5, 12.0, self.config.cooldown(key),
-                lambda v, k=key: self._on_cooldown(k, v), step=0.5, fmt="{:.1f}s")
-            frame.pack(fill="x", padx=12, pady=2)
-            self._cooldown_sliders[key] = frame
+        w.heading(body, "Potion values").pack(anchor="w", padx=12, pady=(14, 4))
+        cls_row = ctk.CTkFrame(body, fg_color="transparent")
+        cls_row.pack(fill="x", padx=12, pady=(0, 4))
+        ctk.CTkLabel(cls_row, text="Character class:", font=ctk.CTkFont(size=12)).pack(side="left")
+        self._potion_class_menu = ctk.CTkOptionMenu(
+            cls_row, values=["Auto (detected)"] + list(m.CLASS),
+            width=200, height=28, command=self._on_potion_class)
+        self._potion_class_menu.pack(side="left", padx=(8, 0))
+        w.hint(body, "Restore amounts are class-dependent (see the table below). "
+                     "Pick a class to preview its numbers, or leave on Auto to use "
+                     "the class detected in-game.").pack(anchor="w", padx=12, pady=(0, 4))
+
+        frame, _ = w.labeled_slider(
+            body, "Safety margin (%)", 0, 100,
+            self.config.behavior.get("potion_margin_percent", 20),
+            self._on_margin, step=5, fmt="{:.0f}%")
+        frame.pack(fill="x", padx=12, pady=2)
+        self._margin_slider = frame
+        w.hint(body, "Potions restore over time, not instantly.  The app waits "
+                     "one potion's restore duration + this margin before drinking "
+                     "the same kind again, so a weak potion is never stacked on a "
+                     "strong one (two in a row only average the fill and heal "
+                     "slower).  Rejuvenation is instant.").pack(anchor="w", padx=12, pady=(0, 4))
+
+        monospace = ctk.CTkFont(family="Consolas", size=12)
+        self._potion_table_rows: list = []
+        for kind, title in (("heal", "Healing potions"), ("mana", "Mana potions")):
+            ctk.CTkLabel(body, text=title, font=ctk.CTkFont(size=12, weight="bold")
+                         ).pack(anchor="w", padx=16, pady=(8, 0))
+            header = ctk.CTkLabel(body, text=f"{'potion':<18}{'duration':>10}{'restores':>11}",
+                                  font=monospace, text_color="gray60")
+            header.pack(anchor="w", padx=22)
+            names = m.default_potion_codes().grade_names(kind)
+            for grade, (dur, g0, g1, g2) in enumerate(m.POTION_TABLES[kind]):
+                label = ctk.CTkLabel(body, text="", font=monospace, justify="left", anchor="w")
+                label.pack(anchor="w", padx=22)
+                self._potion_table_rows.append(
+                    (kind, names[grade].capitalize(), dur, g0, g1, g2, label))
 
         ctk.CTkButton(body, text="Reset to defaults", fg_color="#444",
                       hover_color="#555", command=self._reset_triggers).pack(anchor="w", padx=12, pady=14)
+        self._sync_sliders()
 
     def _on_threshold(self, key, value):
         self.config.thresholds[key] = int(round(value))
         self.config.save()
 
-    def _on_cooldown(self, key, value):
-        self.config.cooldowns[key] = round(float(value), 1)
+    def _on_margin(self, value):
+        self.config.behavior["potion_margin_percent"] = int(round(value))
         self.config.save()
 
+    def _on_potion_class(self, choice):
+        self.config.behavior["potion_class_override"] = "" if choice == "Auto (detected)" else choice
+        self.config.save()
+        self._render_potion_table()
+
+    def _selected_potion_class(self) -> str:
+        """Class used to preview potion amounts: override, else detected, else ''."""
+        override = self.config.potion_class()
+        if override:
+            return override
+        codes = getattr(getattr(self, "reader", None), "codes", None)
+        return getattr(codes, "player_class", "") or ""
+
+    def _render_potion_table(self):
+        cls = self._selected_potion_class()
+        for kind, name, dur, g0, g1, g2, label in self._potion_table_rows:
+            group = m.CLASS_GROUPS.get(kind, {}).get(cls, 1)
+            restore = (g0, g1, g2)[group]
+            label.configure(text=f"{name:<18}{dur:>9.2f}s  restore {restore:>4}")
+
+    def _sync_potion_class_menu(self):
+        self._potion_class_menu.set(self.config.potion_class() or "Auto (detected)")
+
     def _sync_sliders(self):
-        """Push config values into every trigger/cooldown slider."""
+        """Push config values into every trigger slider + margin + potion table."""
         for k, frame in self._trigger_sliders.items():
             frame.set_value(self.config.threshold(k))  # type: ignore[attr-defined]
-        for k, frame in self._cooldown_sliders.items():
-            frame.set_value(self.config.cooldown(k))  # type: ignore[attr-defined]
+        self._margin_slider.set_value(  # type: ignore[attr-defined]
+            self.config.behavior.get("potion_margin_percent", 20))
+        self._sync_potion_class_menu()
+        self._render_potion_table()
 
     def _reset_triggers(self):
         from d2r.config import DEFAULTS
         self.config.thresholds = dict(DEFAULTS["thresholds"])
-        self.config.cooldowns = dict(DEFAULTS["cooldowns"])
+        self.config.behavior["potion_margin_percent"] = DEFAULTS["behavior"]["potion_margin_percent"]
+        self.config.behavior["potion_class_override"] = ""
         self._sync_sliders()
         self.config.save()
 

@@ -47,6 +47,9 @@ class GameReader:
         self._max_life = 0
         self._max_mana = 0
         self._max_merc = 0
+        # Which hireling the observed merc max belongs to; a new hireling resets
+        # the tracker so an old (higher) max can't over-report a weaker one.
+        self._merc_unit_id = 0
         # Manual max override (config "max_override"): when > 0 it is used directly
         # as the denominator so the % is correct even before the observed max latches.
         self.max_override = {"player_hp": 0, "player_mp": 0, "merc_hp": 0}
@@ -196,11 +199,14 @@ class GameReader:
                 raw = self._read_stats(sp, sc)
                 has_life = m.STAT["Life"] in raw and m.STAT["MaxLife"] in raw
                 if txt in self.merc_txtfiles and has_life:
+                    if not is_corpse:
+                        # Living hireling always wins over a corpse found earlier.
+                        matched = (unit, raw, txt)
+                        matched_corpse = False
+                        break
                     if matched is None:
                         matched = (unit, raw, txt)
-                        matched_corpse = is_corpse
-                    if not is_corpse:
-                        break  # living hireling identified
+                        matched_corpse = True
                     unit = self.proc.read_ptr(unit + m.UNIT_OFFSET_NEXT)
                     continue
                 if has_life and not is_corpse:
@@ -224,14 +230,20 @@ class GameReader:
         level = raw.get(m.STAT["Level"], 0)
         name = ""
         if unit:
-            ud = self.proc.read_ptr(unit + m.UNIT_OFFSET_UNIT_DATA)
-            name = self.proc.read_string(ud) if ud else ""
-        # Monster names are usually encoded (not plain strings); only keep a
-        # name that is clean printable ASCII so the UI never shows garbage.
-        if name and any(ord(c) < 32 or ord(c) > 126 for c in name):
+            # Hireling names are UTF-16LE at +0x2C; unit_data is a garbled
+            # legacy buffer, so it is only a fallback.
+            name = self.proc.read_wide_string(unit + m.UNIT_OFFSET_NAME, 64)
+            if not name:
+                ud = self.proc.read_ptr(unit + m.UNIT_OFFSET_UNIT_DATA)
+                name = self.proc.read_string(ud) if ud else ""
+        # Drop control characters / garbage so the UI never shows junk.
+        if name and any(ord(c) < 32 for c in name):
             name = ""
         return {
             "hp": hp, "max_hp": max_hp,
+            "raw_life": raw.get(m.STAT["Life"], 0),
+            "raw_max_life": raw.get(m.STAT["MaxLife"], 0),
+            "unit_id": self.proc.read_u32(unit + m.UNIT_OFFSET_UNIT_ID) if unit else 0,
             "name": name,
             "type": m.MERC_TYPE.get(txt, f"Hireling ({txt})"),
             "level": level,
@@ -241,15 +253,18 @@ class GameReader:
     def _merc_values(raw: dict) -> tuple[int, int]:
         """Convert raw merc stats into (life_display, max_display).
 
-        MaxLife is stored shifted (<<8).  Life *below* 0x8000 is reported by the
-        engine as a 0..1 fraction of max (display values 0-127), so it is scaled
-        back proportionally; from 0x8000 up it is a plain shifted value (128+)."""
+        MaxLife is stored shifted (<<8).  Life at or below 0x8000 is reported by
+        the engine as a 0..1 fraction of max scaled to [0, 0x8000] (display
+        values 0..max), so it is scaled back proportionally; only values ABOVE
+        0x8000 are a plain shifted value (128+).  The fraction hits exactly
+        0x8000 at FULL HP, which is why the boundary is inclusive: an old
+        ``< 0x8000`` check read a full merc as 128 (128/189 = 67%)."""
         raw_max = raw.get(m.STAT["MaxLife"], 0)
         max_disp = raw_max >> 8
         if max_disp <= 0:
             return 0, 0
         raw_life = raw.get(m.STAT["Life"], 0)
-        if raw_life < 32768:
+        if raw_life <= 32768:
             life_disp = int(raw_life / 32768.0 * max_disp)
         else:
             life_disp = raw_life >> 8
@@ -504,6 +519,9 @@ class GameReader:
 
             p = self._read_player(unit)
             stats = p["stats"]
+            # Restore amounts are class-dependent; keep the potion table in sync
+            # with the character that is actually playing.
+            self.codes.player_class = p["class"]
             life = stats.get(m.STAT["Life"], 0)
             max_life = stats.get(m.STAT["MaxLife"], 0)
             mana = stats.get(m.STAT["Mana"], 0)
@@ -538,9 +556,13 @@ class GameReader:
             snap.mana_percent = mp_pct
             merc = self._read_merc()
             if merc is not None:
-                # Merc max also gets the gear-bonus treatment: the MaxLife stat is
-                # base-only, so track the running observed max (seeded by the stat
-                # and the current life) the same way we do for the player.
+                # The merc's Life is a fraction of max, so a full merc reads
+                # life == max after the boundary fix.  A new hireling (unit id
+                # change) resets the observed max so an old hireling's higher
+                # max can't over-report the new one.
+                if merc.get("unit_id") != self._merc_unit_id:
+                    self._merc_unit_id = merc.get("unit_id", 0)
+                    self._max_merc = 0
                 self._max_merc = max(self._max_merc, merc["max_hp"], merc["hp"])
                 eff_merc_max = self.max_override.get("merc_hp") or self._max_merc or 1
                 snap.merc_hp = merc["hp"]
@@ -752,6 +774,9 @@ class GameReader:
         else:
             m_pct = int(merc["hp"] / merc["max_hp"] * 100) if merc["max_hp"] else 0
             lines.append(f"  merc HP     : {merc['hp']} / {merc['max_hp']} ({m_pct}%)")
+            lines.append(f"    raw       : Life=0x{merc['raw_life']:X} ({merc['raw_life']})"
+                         f"  MaxLife=0x{merc['raw_max_life']:X} ({merc['raw_max_life']})"
+                         f"  unitId={merc['unit_id']}")
             lines.append(f"  merc type   : {merc['type']}   level: {merc['level']}   name: {merc['name']!r}")
 
         lines.append("")
