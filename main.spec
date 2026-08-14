@@ -1,23 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for the D2R Infernal Auto Potion tool.
-# Build:  pyinstaller main.spec --noconfirm
-# Output: dist/D2RAutoPotion.exe  (single file, no console window)
 
-from PyInstaller.utils.hooks import collect_all
-
-# customtkinter ships JSON theme data and submodules that must be bundled.
-datas, binaries, hiddenimports = collect_all('customtkinter')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=[],
+    datas=[],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['numpy', 'matplotlib', 'pandas', 'PIL', 'scipy'],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )
@@ -29,14 +22,14 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='D2RAutoPotion',
+    name='main',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

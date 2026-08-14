@@ -65,25 +65,31 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Goals / tasks
 
-- **v1.4.0 Iteration 5 (managed columns + belt refill) — in progress**:
-  user asked for improved auto-potion usage.  **Iteration A (built now)**:
-  the app can manage all 4 belt columns (Q/W/E/R checkboxes on the Keys tab;
-  unmanaged columns are never drunk from or refilled) and a **dumb-tier belt
-  refill**: while the inventory panel is open, if a managed belt slot is empty,
-  click a matching inventory potion into it (restocks the family last drunk
-  first).  One click per tick, throttled (default 400ms), only while the game
-  window is the foreground window (`d2r/input.py` SetCursorPos + SendInput click;
-  clicks never land while another window has focus).  Click positions are
-  calibrated in-game by hovering two inventory potions and pressing F8
-  (HotkeyListener) — the hovered item's grid cell (Hover struct + item path X/Y)
-  is paired with the cursor position and `solve_grid_mapping` least-squares
-  solves cell size + client-relative origin (persisted in config refill section).
-  Belt rows are read from the equipped belt item's txtFileNo
-  (`BELT_ROWS_BY_TXTFILE`: classic + Infernal +15 ids; 4x1..4x4) with a fallback
-  to the tallest occupied row.  **Iteration B (planned)**: per-slot 4xN belt
-  layout grid config + smart consume (smallest sufficient potion, prefer specific
-  over rejuv) + layout/ratio refill with preference order (user-defined → same
-  type → same family → mix).
+- **v1.4.0 Iteration 5 (managed columns + belt refill) — Iteration A landed
+  (v1.4.0), Iteration B landed (v1.5.0)**.  Iteration A: the app can manage all 4
+  belt columns (Q/W/E/R checkboxes on the Keys tab; unmanaged columns are never
+  drunk from or refilled) and a **dumb-tier belt refill**: while the inventory
+  panel is open, if a managed belt slot is empty, click a matching inventory
+  potion into it (restocks the family last drunk first).  One click per tick,
+  throttled (default 400ms), only while the game window is the foreground window
+  (`d2r/input.py` SetCursorPos + SendInput click; clicks never land while another
+  window has focus).  Click positions are calibrated in-game by hovering two
+  inventory potions and pressing F8 (HotkeyListener) — the hovered item's grid
+  cell (Hover struct + item path X/Y) is paired with the cursor position and
+  `solve_grid_mapping` least-squares solves cell size + client-relative origin
+  (persisted in config refill section).  Belt rows are read from the equipped
+  belt item's txtFileNo (`BELT_ROWS_BY_TXTFILE`: classic + Infernal +15 ids;
+  4x1..4x4) with a fallback to the tallest occupied row.  **Iteration B (built)**:
+  smart tier — `plan_consume` decides from the whole managed belt (both critical
+  → rejuv; HP-only → heal if a covering heal is on a managed slot else rejuv;
+  MP-only → the mana equivalent; non-critical → heal/mana fire independently),
+  a per-slot 4×4 Belt plan grid + HP/Mana/Rejuv ratio on the Keys tab (scrollable),
+  and layout/ratio refill (`desired_kind_for_slot`: user layout → dominant kind
+  in column → biggest ratio shortfall → any; `plan_layout_refill`: lowest grade
+  of desired kind → same-kind fallback → any).  Config stores `layout`/`ratio`/
+  `behavior.smart`; smart defaults True.  **Deferred known issue**: the merc
+  auto-potion path is unchanged from v1.4.0 and the smart tier's belt/inventory
+  reads still need a live in-game end-to-end verification (unit-tested only).
 - **Done**: v1.0.0 baseline, v1.1.0 potion monitoring / profiles / presets / event log /
   session stats / global hotkey (landed 2026-08-14).
 - **Done (v1.2.0)**: Iteration 1 (user-customizable global hotkey, presets at
@@ -105,11 +111,15 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Build state
 
-- Version `1.4.0`. Test suite: 62 tests green (added `belt_rows_for`,
+- Version `1.5.0`. Test suite: 84 tests green (v1.4.0 added `belt_rows_for`,
   `belt_empty_slots`, `solve_grid_mapping`, refill planner tests, config
   refill/managed-column accessors, watcher managed-column gating + last-kind
-  tracking).  Belt + inventory + player + merc live-verified against pid 20048
-  (Sylus, Warlock 20) — belt corners {0:532, 3:528, 4:608, 7:529}; wizard
-  round-trip verified against a temp config.  Refill probes live against pid
-  25000 (char select): offsets ok, item read correctly reports no game; the
-  equipped-belt/inventory/hover reads need a live game to fully verify.
+  tracking; v1.5.0 added `plan_consume`, `desired_kind_for_slot`,
+  `plan_layout_refill`, config smart/layout/ratio accessors, watcher smart-tier
+  tests).  compileall + headless UI smoke pass.  Belt + inventory + player +
+  merc live-verified against pid 20048 (Sylus, Warlock 20) — belt corners
+  {0:532, 3:528, 4:608, 7:529}; wizard round-trip verified against a temp
+  config.  Refill probes live against pid 25000 (char select): offsets ok, item
+  read correctly reports no game; the smart tier's equipped-belt/inventory reads
+  and the merc auto-potion path still need a live in-game end-to-end check
+  (deferred).

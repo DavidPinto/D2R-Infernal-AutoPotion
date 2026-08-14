@@ -457,6 +457,7 @@ class MainApp(ctk.CTk):
             for key, ent in self._max_entries.items():
                 ent.delete(0, "end")
                 ent.insert(0, str(self.config.max_override.get(key, 0)))
+            self._refresh_belt_plan()
             self._refresh_profile_menu()
             self._emit_log(f"Profile '{name}' loaded.", "info")
         else:
@@ -472,10 +473,14 @@ class MainApp(ctk.CTk):
 
     # --------------------------------------------------------------- keys
     def _build_keys(self, parent):
-        w.heading(parent, "Belt key bindings").pack(anchor="w", padx=12, pady=(10, 4))
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=4, pady=4)
+        body = scroll
+
+        w.heading(body, "Belt key bindings").pack(anchor="w", padx=12, pady=(10, 4))
         self._key_buttons: dict[str, ctk.CTkButton] = {}
         for action, label in ACTION_NAMES.items():
-            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row = ctk.CTkFrame(body, fg_color="transparent")
             row.pack(fill="x", padx=12, pady=3)
             ctk.CTkLabel(row, text=label, width=200, anchor="w").pack(side="left")
             btn = ctk.CTkButton(row, text="", width=140,
@@ -487,15 +492,15 @@ class MainApp(ctk.CTk):
             self._key_buttons[action] = btn
             self._refresh_key_button(action)
 
-        w.hint(parent, "Click a binding to rebind it; use + to add another belt "
-                       "column to the same action (e.g. heal -> Q + R). Merc actions "
-                       "are sent with the Shift modifier (D2R's feed-merc binding). "
-                       "Match these to your in-game belt layout; the 4th column (R) "
-                       "is supported and the watcher picks the best grade in the "
-                       "bound columns.").pack(anchor="w", padx=12, pady=(6, 8))
+        w.hint(body, "Click a binding to rebind it; use + to add another belt "
+                     "column to the same action (e.g. heal -> Q + R). Merc actions "
+                     "are sent with the Shift modifier (D2R's feed-merc binding). "
+                     "Match these to your in-game belt layout; the 4th column (R) "
+                     "is supported and the watcher picks the best grade in the "
+                     "bound columns.").pack(anchor="w", padx=12, pady=(6, 8))
 
-        w.heading(parent, "Belt columns the app manages").pack(anchor="w", padx=12, pady=(4, 4))
-        man = ctk.CTkFrame(parent, fg_color="transparent")
+        w.heading(body, "Belt columns the app manages").pack(anchor="w", padx=12, pady=(4, 4))
+        man = ctk.CTkFrame(body, fg_color="transparent")
         man.pack(anchor="w", padx=12, pady=(0, 4))
         self._managed_boxes: dict[str, ctk.CTkCheckBox] = {}
         for col in m.BELT_COLUMN_KEYS:
@@ -503,18 +508,18 @@ class MainApp(ctk.CTk):
             box.pack(side="left", padx=(0, 14))
             self._managed_boxes[col] = box
         self._refresh_managed()
-        w.hint(parent, "Uncheck a belt column to keep the app entirely off it — "
-                       "it won't drink from or refill that column.  The game's own "
-                       "inventory button (I) and menu are never touched.").pack(anchor="w", padx=12, pady=(0, 10))
+        w.hint(body, "Uncheck a belt column to keep the app entirely off it — "
+                     "it won't drink from or refill that column.  The game's own "
+                     "inventory button (I) and menu are never touched.").pack(anchor="w", padx=12, pady=(0, 10))
 
-        w.heading(parent, "Belt refill from inventory").pack(anchor="w", padx=12, pady=(4, 4))
+        w.heading(body, "Belt refill from inventory").pack(anchor="w", padx=12, pady=(4, 4))
         self._refill_switch = ctk.CTkSwitch(
-            parent, text="Refill the belt from your inventory while the inventory panel is open",
+            body, text="Refill the belt from your inventory while the inventory panel is open",
             command=self._on_refill_toggle)
         self._refill_switch.pack(anchor="w", padx=12, pady=4)
         self._refill_switch.select() if self.config.refill_enabled() else self._refill_switch.deselect()
 
-        cal = ctk.CTkFrame(parent, fg_color="transparent")
+        cal = ctk.CTkFrame(body, fg_color="transparent")
         cal.pack(anchor="w", padx=12, pady=(8, 0), fill="x")
         ctk.CTkLabel(cal, text="Click positions", font=ctk.CTkFont(size=12)).pack(side="left")
         self._calib_btn = ctk.CTkButton(cal, text="Calibrate…", width=110, height=28,
@@ -528,39 +533,77 @@ class MainApp(ctk.CTk):
                                               fg_color="#444", hover_color="#555",
                                               command=self._clear_calib)
         self._calib_clear_btn.pack(side="left", padx=(6, 0))
-        self._calib_status = ctk.CTkLabel(parent, text="", font=ctk.CTkFont(size=11),
+        self._calib_status = ctk.CTkLabel(body, text="", font=ctk.CTkFont(size=11),
                                           text_color=WARN, wraplength=760, justify="left")
         self._calib_status.pack(anchor="w", padx=12, pady=(4, 2))
-        self._belt_info = ctk.CTkLabel(parent, text="", font=ctk.CTkFont(size=11),
+        self._belt_info = ctk.CTkLabel(body, text="", font=ctk.CTkFont(size=11),
                                        text_color="#8ab4f8")
         self._belt_info.pack(anchor="w", padx=12, pady=(0, 4))
         self._refresh_refill_status()
 
-        w.heading(parent, "Behaviour").pack(anchor="w", padx=12, pady=(4, 4))
-        self._focus_switch = ctk.CTkSwitch(parent, text="Auto-focus game window before pressing keys",
+        w.heading(body, "Belt plan (smart)").pack(anchor="w", padx=12, pady=(4, 4))
+        self._smart_switch = ctk.CTkSwitch(
+            body, text="Smart potion use: choose the best potion across the managed belt",
+            command=self._on_smart_toggle)
+        self._smart_switch.pack(anchor="w", padx=12, pady=4)
+        w.hint(body, "Each cell below says what the belt should hold in that slot "
+                     "(Any = no preference).  Top row = the belt's top row.  When "
+                     "a slot is empty the refill clicks the best inventory potion "
+                     "for it; the mix keeps the counts under 'Belt mix'.").pack(
+                         anchor="w", padx=12, pady=(0, 6))
+        grid = ctk.CTkFrame(body, fg_color="transparent")
+        grid.pack(anchor="w", padx=12, pady=(0, 4))
+        self._layout_menus: dict[int, ctk.CTkOptionMenu] = {}
+        for ui_row in range(4):
+            mem_row = 3 - ui_row            # belt memory row 3 == UI top row
+            for col in range(4):
+                slot_x = mem_row * 4 + col
+                menu = ctk.CTkOptionMenu(
+                    grid, values=["Any", "HP", "Mana", "Rejuv"], width=74, height=26,
+                    command=lambda v, x=slot_x: self._on_layout_change(x, v))
+                menu.grid(row=ui_row, column=col, padx=3, pady=2)
+                self._layout_menus[slot_x] = menu
+        ratio_row = ctk.CTkFrame(body, fg_color="transparent")
+        ratio_row.pack(anchor="w", padx=12, pady=(6, 0), fill="x")
+        ctk.CTkLabel(ratio_row, text="Belt mix (HP / Mana / Rejuv):",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        self._ratio_entries: dict[str, ctk.CTkEntry] = {}
+        for kind, label in (("heal", "HP"), ("mana", "Mana"), ("rejuv", "Rejuv")):
+            cell = ctk.CTkFrame(ratio_row, fg_color="transparent")
+            cell.pack(side="left", padx=(8, 0))
+            ctk.CTkLabel(cell, text=label).pack(side="left")
+            ent = ctk.CTkEntry(cell, width=42, justify="center")
+            ent.pack(side="left", padx=(2, 0))
+            self._ratio_entries[kind] = ent
+        ctk.CTkButton(ratio_row, text="Apply", width=64, height=26,
+                      command=self._apply_belt_ratio).pack(side="left", padx=(8, 0))
+        self._refresh_belt_plan()
+
+        w.heading(body, "Behaviour").pack(anchor="w", padx=12, pady=(4, 4))
+        self._focus_switch = ctk.CTkSwitch(body, text="Auto-focus game window before pressing keys",
                                           command=self._on_focus)
         self._focus_switch.pack(anchor="w", padx=12, pady=4)
         self._focus_switch.select() if self.config.behavior.get("auto_focus_game", True) else self._focus_switch.deselect()
 
-        self._sound_switch = ctk.CTkSwitch(parent, text="Play a chime on each potion",
+        self._sound_switch = ctk.CTkSwitch(body, text="Play a chime on each potion",
                                           command=self._on_sound)
         self._sound_switch.pack(anchor="w", padx=12, pady=4)
         self._sound_switch.select() if self.config.behavior.get("sound", True) else self._sound_switch.deselect()
 
-        self._pause_switch = ctk.CTkSwitch(parent, text="Pause while inventory/stash/menus are open",
+        self._pause_switch = ctk.CTkSwitch(body, text="Pause while inventory/stash/menus are open",
                                           command=self._on_pause)
         self._pause_switch.pack(anchor="w", padx=12, pady=4)
         self._pause_switch.select() if self.config.behavior.get("pause_when_menus_open", True) else self._pause_switch.deselect()
 
         # Poll interval (responsiveness vs CPU).
         self._poll_frame, _ = w.labeled_slider(
-            parent, "Watch refresh interval", 100, 500,
+            body, "Watch refresh interval", 100, 500,
             float(self.config.behavior.get("poll_interval_ms", 150)),
             lambda v: self._on_poll_interval(v), step=50, fmt="{:.0f} ms")
         self._poll_frame.pack(fill="x", padx=12, pady=(8, 2))
 
         # Global arm/disarm hotkey (preset quick-pick + custom capture).
-        hot = ctk.CTkFrame(parent, fg_color="transparent")
+        hot = ctk.CTkFrame(body, fg_color="transparent")
         hot.pack(anchor="w", padx=12, pady=(8, 0), fill="x")
         ctk.CTkLabel(hot, text="Global arm/disarm hotkey",
                      font=ctk.CTkFont(size=12)).pack(side="left")
@@ -581,7 +624,7 @@ class MainApp(ctk.CTk):
         self._hotkey_state.pack(side="left", padx=(8, 0))
         self._hotkey_state.bind("<Button-1>", lambda e: self._refresh_hotkey())
 
-        ctk.CTkButton(parent, text="Reset to defaults", fg_color="#444",
+        ctk.CTkButton(body, text="Reset to defaults", fg_color="#444",
                       hover_color="#555", command=self._reset_keys).pack(anchor="w", padx=12, pady=14)
 
     # ----------------------------------------------------- key capturing
@@ -664,6 +707,47 @@ class MainApp(ctk.CTk):
     def _on_refill_toggle(self):
         self.config.set_refill_enabled(bool(self._refill_switch.get()))
         self.config.save()
+
+    # ------------------------------------------------------- smart belt plan
+    _LAYOUT_VALUE = {"Any": None, "HP": "heal", "Mana": "mana", "Rejuv": "rejuv"}
+    _LAYOUT_LABEL = {"heal": "HP", "mana": "Mana", "rejuv": "Rejuv"}
+
+    def _on_smart_toggle(self):
+        self.config.set_smart_enabled(bool(self._smart_switch.get()))
+        self.config.save()
+
+    def _on_layout_change(self, slot_x: int, value: str):
+        layout = self.config.belt_layout()
+        kind = self._LAYOUT_VALUE.get(value)
+        if kind is None:
+            layout.pop(slot_x, None)
+        else:
+            layout[slot_x] = kind
+        self.config.set_belt_layout(layout)
+        self.config.save()
+
+    def _apply_belt_ratio(self):
+        ratio = {}
+        for kind, ent in self._ratio_entries.items():
+            try:
+                ratio[kind] = max(0, int(ent.get().strip() or "0"))
+            except ValueError:
+                ratio[kind] = self.config.belt_ratio().get(kind, 0)
+        self.config.set_belt_ratio(ratio)
+        self.config.save()
+        self._refresh_belt_plan()
+        self._emit_log("Belt mix saved.", "info")
+
+    def _refresh_belt_plan(self):
+        """Push the smart switch, per-slot layout grid, and ratio fields from config."""
+        self._smart_switch.select() if self.config.smart_enabled() else self._smart_switch.deselect()
+        layout = self.config.belt_layout()
+        for slot_x, menu in self._layout_menus.items():
+            menu.set(self._LAYOUT_LABEL.get(layout.get(slot_x), "Any"))
+        ratio = self.config.belt_ratio()
+        for kind, ent in self._ratio_entries.items():
+            ent.delete(0, "end")
+            ent.insert(0, str(ratio.get(kind, 0)))
 
     def _refresh_refill_status(self):
         mapping = self.config.refill_mapping()
@@ -851,10 +935,12 @@ class MainApp(ctk.CTk):
         self.after(0, self._toggle_enabled)
 
     def _reset_keys(self):
-        """Restore default key bindings and behaviour switches."""
+        """Restore default key bindings, behaviour switches, and belt plan."""
         from d2r.config import DEFAULTS
         self.config.keys = dict(DEFAULTS["keys"])
         self.config.behavior = dict(DEFAULTS["behavior"])
+        self.config.layout = dict(DEFAULTS["layout"])
+        self.config.ratio = dict(DEFAULTS["ratio"])
         for a in self._key_buttons:
             self._refresh_key_button(a)
         self._focus_switch.select() if self.config.behavior.get("auto_focus_game", True) else self._focus_switch.deselect()
@@ -862,6 +948,7 @@ class MainApp(ctk.CTk):
         self._pause_switch.select() if self.config.behavior.get("pause_when_menus_open", True) else self._pause_switch.deselect()
         self._poll_frame.set_value(float(self.config.behavior.get("poll_interval_ms", 150)))
         self._hotkey_preset.set(self.config.behavior.get("toggle_hotkey", "") or "Disabled")
+        self._refresh_belt_plan()
         self.config.save()
         self._refresh_hotkey()
 

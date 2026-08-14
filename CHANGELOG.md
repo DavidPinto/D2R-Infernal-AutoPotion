@@ -5,6 +5,50 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-08-14
+
+Improved auto potion (Iteration B: smart tier — belt plan + smart consume + layout/ratio refill).
+
+### Added
+
+- **Smart potion choice.** A new planner (`plan_consume`) decides from the whole
+  managed belt, not just the bound columns.  Rules:
+  - HP *and* MP both in the rejuv range → rejuv.
+  - Only HP low → drink a heal if a heal that fully covers the deficit is on a
+    managed belt slot, otherwise rejuv.
+  - Only MP low → drink a mana if a mana that fully covers the deficit is on a
+    managed belt slot, otherwise rejuv.
+  - Non-critical dips → heal and mana fire independently of each other.
+  - "Covers" means the potion's restore ≥ the HP/MP deficit; the column still
+    drinks the smallest sufficient grade.  Enabled by default (smart switch on
+    the Keys tab; turning it off falls back to the previous dumb tier).
+- **Belt plan section (Keys tab).** A 4×4 grid that mirrors the in-game belt
+  (Any / HP / Mana / Rejuv per slot) plus an HP / Mana / Rejuv ratio.  Together
+  they drive smart-tier refill: the kind wanted for an empty slot is  *user
+  layout → dominant kind already in that column (restock in place) → biggest
+  positive shortfall vs the ratio → any potion*; the potion moved is the lowest
+  grade of that kind in inventory, then same-kind fallback, then any potion.
+  The Keys tab is now scrollable so the whole section fits on small windows.
+- Config `layout` (per-slot, 0–15) and `ratio` persisted in `config/config.json`;
+  accessors `belt_layout()` / `set_belt_layout()` / `belt_ratio()` /
+  `set_belt_ratio()`; `behavior["smart"]`.
+- Pure, unit-tested helpers: `plan_consume`, `desired_kind_for_slot`,
+  `plan_layout_refill`.
+
+### Fixed
+
+- `_belt_covering` now verifies the restore amount actually covers the deficit
+  (`choose_belt_column` returns the strongest grade even when none covers) and
+  finds columns by their own index (the columns list can be shorter than 4).
+- `_belt_has_kind` matches managed columns by their key (Q/W/E/R), not their
+  index.
+
+### Known / deferred
+
+- Smart-tier consume + layout refill are verified by unit tests but not yet
+  live-verified in-game; the merc auto-potion path is unchanged from 1.4.0 and
+  still needs a live game to re-verify end-to-end.
+
 ## [1.4.0] - 2026-08-14
 
 Improved auto potion (Iteration A: managed columns + belt refill).

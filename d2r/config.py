@@ -94,6 +94,10 @@ DEFAULTS = {
         "sound": True,
         "pause_when_menus_open": True,
         "poll_interval_ms": 150,
+        # Smart potion use: pick the best potion across the whole managed belt
+        # (prefer a specific potion over a rejuv when only one stat is low) and
+        # refill the belt per the layout/ratio plan below.
+        "smart": True,
         # Global hotkey that toggles arm/disarm while you are in-game.
         # Format "Ctrl+Alt+F12" / "Ctrl+Shift+F9"; "" = disabled (default).
         "toggle_hotkey": "",
@@ -126,6 +130,11 @@ DEFAULTS = {
         "origin_y": 0.0,
         "interval_ms": 400,
     },
+    # Smart-tier belt plan.  "layout" pins a potion kind per belt slot X
+    # (JSON keys are strings; "" / missing = "Any").  "ratio" is the target
+    # belt mix (counts per kind) the refill tries to keep.
+    "layout": {},
+    "ratio": {"heal": 8, "mana": 6, "rejuv": 2},
 }
 
 
@@ -144,6 +153,8 @@ class AppConfig:
     combo: str = ""
     managed: list = field(default_factory=lambda: list(DEFAULTS["managed"]))
     refill: dict = field(default_factory=lambda: dict(DEFAULTS["refill"]))
+    layout: dict = field(default_factory=lambda: dict(DEFAULTS["layout"]))
+    ratio: dict = field(default_factory=lambda: dict(DEFAULTS["ratio"]))
 
     # ----------------------------------------------------------- accessors
     # All accessors fall back to the factory default if a key is missing from
@@ -218,6 +229,45 @@ class AppConfig:
         self.refill["origin_x"] = 0.0
         self.refill["origin_y"] = 0.0
 
+    # ------------------------------------------------------- smart belt plan
+    def smart_enabled(self) -> bool:
+        return bool(self.behavior.get("smart", True))
+
+    def set_smart_enabled(self, value: bool) -> None:
+        self.behavior["smart"] = bool(value)
+
+    def belt_layout(self) -> dict:
+        """Per-slot belt layout: {slot_x: kind} for valid slot/kind pairs."""
+        out: dict = {}
+        for k, v in (self.layout or {}).items():
+            try:
+                x = int(k)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= x <= 15 and v in ("heal", "mana", "rejuv"):
+                out[x] = v
+        return out
+
+    def set_belt_layout(self, layout: dict) -> None:
+        clean: dict = {}
+        for k, v in (layout or {}).items():
+            try:
+                x = int(k)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= x <= 15 and v in ("heal", "mana", "rejuv"):
+                clean[str(x)] = v
+        self.layout = clean
+
+    def belt_ratio(self) -> dict:
+        """Target belt mix: {kind: count} (missing kinds default to 0)."""
+        return {k: max(0, int(self.ratio.get(k, 0))) for k in ("heal", "mana", "rejuv")}
+
+    def set_belt_ratio(self, ratio: dict) -> None:
+        clean = {k: max(0, int(v)) for k, v in (ratio or {}).items()
+                 if k in ("heal", "mana", "rejuv")}
+        self.ratio = clean
+
     # ------------------------------------------------------------- persist
     def save(self) -> None:
         """Write the current settings to CONFIG_PATH (best-effort, never raises)."""
@@ -256,6 +306,12 @@ class AppConfig:
             refill = data.get("refill")
             if isinstance(refill, dict):
                 cfg.refill.update({k: v for k, v in refill.items()})
+            layout = data.get("layout")
+            if isinstance(layout, dict):
+                cfg.layout.update({str(k): v for k, v in layout.items()})
+            ratio = data.get("ratio")
+            if isinstance(ratio, dict):
+                cfg.ratio.update({str(k): v for k, v in ratio.items()})
             return cfg
         except Exception:
             return cls()
@@ -270,6 +326,8 @@ class AppConfig:
         self.combo = ""
         self.managed = list(DEFAULTS["managed"])
         self.refill = dict(DEFAULTS["refill"])
+        self.layout = dict(DEFAULTS["layout"])
+        self.ratio = dict(DEFAULTS["ratio"])
 
     # ------------------------------------------------------------- profiles
     PROFILE_SECTIONS = ("thresholds", "cooldowns", "keys", "max_override")

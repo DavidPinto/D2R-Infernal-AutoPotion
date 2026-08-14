@@ -309,6 +309,7 @@ class GameReader:
                             belt_cols.setdefault(col, []).append((slot_x, txt))
                             if slot_x >= 0:
                                 belt_filled.append(slot_x)
+                                counts.belt_slots[slot_x] = kind
                         elif loc == m.ITEM_LOC_INVENTORY and main_id:
                             if ud:
                                 page = self.proc.read_u8(ud + m.ITEM_UNIT_DATA_OFFSET_INVPAGE)

@@ -445,10 +445,13 @@ class PotionCounts:
         BeltColumn(key=k, index=i) for i, k in enumerate(BELT_COLUMN_KEYS)])
     ok: bool = False
     # Belt refill bookkeeping: how many rows the equipped belt has, which slot
-    # X values hold a potion, and which are free (computed by the reader).
+    # X values hold a potion, which are free, and the per-slot potion kind
+    # (slot X -> "heal"/"mana"/"rejuv"/"other").  belt_slots is what the smart
+    # layout/ratio refill uses to account for the belt's current content.
     belt_rows: int = 1
     belt_filled: list = field(default_factory=list)
     belt_empty: list = field(default_factory=list)
+    belt_slots: dict = field(default_factory=dict)
     # PotionCodes used for grade/restore decisions (set by the reader from the
     # active combo); None -> the built-in Infernal defaults.
     codes: object = None

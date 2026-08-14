@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit).  It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.3.0` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.5.0` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`.  See
 > [Limitations](#limitations) below.
 
@@ -60,6 +60,15 @@ presses the correct belt keys for you.
   only when the game window is foreground, restocking what was just drunk
   first).  Click positions are measured once by hovering two inventory potions
   and pressing F8 — no resolution-specific constants.
+- **Smart potion choice (smart tier).** The watcher decides from the *whole
+  managed belt*, not just the bound column: HP+MP both critical → rejuv; only HP
+  low → heal when a heal that fully covers the deficit is on the belt (else
+  rejuv); only MP low → the mana equivalent; non-critical → heal and mana fire
+  independently.  On by default, off switch on the *Keys* tab.
+- **Belt plan (per-slot layout).** The *Keys* tab has a 4×4 belt grid — set each
+  slot to Any / HP / Mana / Rejuv — plus an HP/Mana/Rejuv ratio.  Smart-tier
+  refill fills an empty slot with the layout kind, else restocks the kind that
+  dominates that column, else the kind most short vs the ratio.
 - **Safe by default.** Pauses while inventory / stash / vendor / menus are open,
   never presses keys outside a live game, tracks Battle Orders when computing
   HP/MP percentages, and defaults to **disarmed** — you arm it deliberately.
@@ -137,8 +146,10 @@ tick, throttled, and only while the game window is the **foreground** window, so
 clicks always land on the game.
 
 Clicking a potion in D2R fills the first empty belt slot the engine chooses, so
-the app drives the *potion choice* (it tracks the belt's fill order).  A
-per-slot belt layout is planned for a later iteration.
+the app drives the *potion choice* (it tracks the belt's fill order).  With the
+**smart tier** on, that choice follows your **Belt plan**: each empty slot is
+filled per your per-slot layout, else restocked to the kind dominating that
+column, else to the kind most short of its HP/Mana/Rejuv ratio.
 
 **One-time click calibration.** The app must know where inventory cells are on
 screen (varies by resolution/window size).  With your inventory open in-game:
@@ -238,12 +249,16 @@ if merc alive:
     elif merc HP% <= merc_heal_at               → Shift + heal
 ```
 
-For each potion the watcher computes the HP/MP deficit, then across the *bound*
-belt columns picks the smallest potion grade that covers it (strongest if none
-cover); it skips the action entirely when the bound columns hold no usable
-potion.  Belt columns are read per-slot from the item table — column = `X % 4`
-(`Q`/`W`/`E`/`R`) and next-to-drink is the lowest `X` in that column, matching
-how the game shifts potions down the belt.
+With the **smart tier** on (default), the watcher instead calls `plan_consume`
+over the whole *managed* belt: it takes rejuv when HP and MP are both in the
+rejuv range, drinks a specific heal/mana only when that kind is on a managed
+belt slot and fully covers the deficit (smallest sufficient grade), and falls
+back to rejuv otherwise.  Each potion the watcher computes the HP/MP deficit,
+then across the *bound* belt columns picks the smallest potion grade that covers
+it (strongest if none cover); it skips the action entirely when the bound
+columns hold no usable potion.  Belt columns are read per-slot from the item
+table — column = `X % 4` (`Q`/`W`/`E`/`R`) and next-to-drink is the lowest `X`
+in that column, matching how the game shifts potions down the belt.
 
 Key presses are injected with `SendInput` from a background watcher thread;
 before each press the tool focuses the game window (via `AttachThreadInput` +
@@ -279,6 +294,10 @@ If an update changes `D2R.exe` so a signature no longer matches, the tool shows
   slot the engine picks, so the refill drives the potion choice, not an exact
   slot.  It only acts while the inventory panel is open and only clicks when the
   game window is the foreground window.
+- **Smart tier not yet live-verified.** Smart consume + layout refill are
+  covered by unit tests but the equipped-belt/inventory reads behind them were
+  verified on the dumb tier (Iteration A); the merc auto-potion path is
+  unchanged and likewise still needs an end-to-end in-game check.
 - **Single-player / offline QoL.** Online play is subject to Blizzard's terms
   of service.  Use at your own risk.
 - **Window focus.** The tool briefly brings the game window to the foreground

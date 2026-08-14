@@ -209,11 +209,21 @@ class PotionWatcher:
     def _tick(self, snap: m.PlayerSnapshot) -> None:
         """Decide which potion (if any) to drink this tick.
 
-        Rejuvenation wins when HP or MP is critical; otherwise heal/mana are
-        checked independently (a frame can legitimately drink both).  The merc
-        is handled separately with its own thresholds, heal preferred over
-        rejuv when the merc is merely hurt.  Each use is grade-aware: the best
-        bound belt column for the deficit is chosen when the belt is readable."""
+        Smart tier (default): ``plan_consume`` picks the best potion across the
+        whole managed belt, preferring a specific potion over a rejuv when only
+        one stat is low.  Plain tier: rejuv wins when HP or MP is critical,
+        otherwise heal/mana are checked independently.  The merc is always
+        handled separately with its own thresholds, heal preferred over rejuv
+        when the merc is merely hurt.  Each use is grade-aware: the best bound
+        belt column for the deficit is chosen when the belt is readable."""
+        if self.config.smart_enabled():
+            self._smart_tick(snap)
+        else:
+            self._plain_tick(snap)
+        self._merc_tick(snap)
+
+    def _plain_tick(self, snap: m.PlayerSnapshot) -> None:
+        """Plain-tier player decisions (rejuv-wins-if-critical, then heal/mana)."""
         cfg = self.config
         t = time.monotonic()
 
@@ -231,7 +241,38 @@ class PotionWatcher:
             if snap.mana_percent <= cfg.threshold("mana_potion_at") and self._ready("mana", t):
                 self._act("mana", "mana", mp_def, snap.max_mana, f"MP {snap.mana_percent}%", snap, t)
 
-        # Mercenary (only when one is present).
+    def _smart_tick(self, snap: m.PlayerSnapshot) -> None:
+        """Smart-tier player decisions via :func:`refill.plan_consume`."""
+        cfg = self.config
+        t = time.monotonic()
+        hp_def = max(0, snap.max_hp - snap.hp)
+        mp_def = max(0, snap.max_mana - snap.mana)
+        acts, missing = refill_mod.plan_consume(
+            hp_percent=snap.hp_percent, mana_percent=snap.mana_percent,
+            hp_def=hp_def, mp_def=mp_def,
+            max_hp=snap.max_hp, max_mana=snap.max_mana,
+            pc=snap.potion_counts, managed=self.config.managed_columns(),
+            heal_at=cfg.threshold("healing_potion_at"),
+            mana_at=cfg.threshold("mana_potion_at"),
+            rejuv_life=cfg.threshold("rejuv_potion_at_life"),
+            rejuv_mana=cfg.threshold("rejuv_potion_at_mana"),
+            bound={a: self.config.keys_for(a) for a in ("heal", "mana", "rejuv")},
+        )
+        for kind in missing:
+            action = kind
+            if action not in self._out_of_stock:
+                self._out_of_stock.add(action)
+                self._emit("info", f"No {kind} potion left on the belt.", snap)
+        for act in acts:
+            action = act["action"]
+            if self._ready(action, t):
+                self._act(action, act["kind"], act["deficit"], act["max_value"],
+                          act["reason"], snap, t)
+
+    def _merc_tick(self, snap: m.PlayerSnapshot) -> None:
+        """Mercenary decisions (only when one is present and alive)."""
+        cfg = self.config
+        t = time.monotonic()
         if snap.merc_alive:
             m_def = max(0, snap.merc_max_hp - snap.merc_hp)
             if snap.merc_hp_percent <= cfg.threshold("merc_rejuv_potion_at") and self._ready("merc_rejuv", t):
@@ -304,10 +345,12 @@ class PotionWatcher:
             self._emit("info", message, snap)
 
     def _refill_if_open(self, snap: m.PlayerSnapshot) -> None:
-        """Dumb-tier belt refill: while the inventory panel is open, click one
-        matching inventory potion per interval into the first empty managed belt
-        slot.  Only runs when the game window is foreground so the click lands
-        on the game, never on another app."""
+        """Belt refill: while the inventory panel is open, click one matching
+        inventory potion per interval into the first empty managed belt slot.
+
+        Plain tier restocks whatever family was last drunk; smart tier follows
+        the per-slot layout + ratio plan.  Only runs when the game window is
+        foreground so the click lands on the game, never on another app."""
         cfg = self.config
         if not cfg.refill_enabled():
             return
@@ -338,8 +381,14 @@ class PotionWatcher:
         empty = [x for x in pc.belt_empty if (x % len(m.BELT_COLUMN_KEYS)) in managed]
         if not empty:
             return
-        plan = refill_mod.plan_refills(empty, self.reader.inventory_potions(),
-                                       last_kind=self._last_kind or None)
+        if self.config.smart_enabled():
+            plan = refill_mod.plan_layout_refill(
+                empty, pc.belt_slots, self.reader.inventory_potions(),
+                self.config.belt_layout(), self.config.belt_ratio(),
+                last_kind=self._last_kind or None)
+        else:
+            plan = refill_mod.plan_refills(empty, self.reader.inventory_potions(),
+                                           last_kind=self._last_kind or None)
         if not plan:
             return
         choice = plan[0]
