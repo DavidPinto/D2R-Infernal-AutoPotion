@@ -65,6 +65,21 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Goals / tasks
 
+- **Done (v1.8.0)**: Keys tab reworked — per-potion key bindings removed
+  entirely (the app drinks via the belt's own Q/W/E/R hotkeys and reads each
+  slot to see which potion it holds; the managed-column checkboxes ARE the
+  hotkey set, any managed column may serve any action), feed-to-merc modifier
+  is user-pickable (Shift default; `behavior["merc_modifier"]` →
+  `config.merc_modifier()`, `KeySender.press` reads it, `press_key(vk,
+  modifier=...)` replaces hard-coded `with_shift`), Belt mix (ratio) removed
+  from the UI and from the smart refill decision (`desired_kind_for_slot` is
+  now layout → column-family → None; `plan_layout_refill` falls back to
+  last-drunk kind → any; `plan_consume`/`_allowed_for` lost the `bound` param,
+  watcher `_pick` lost `keys_for`, config `key()`/`keys_for()` removed,
+  `FALLBACK_KEYS` in keys.py covers the unreadable-belt case), all Keys-tab
+  texts rewritten.  Ratio config field kept for back-compat (unused).
+  95 tests green; compileall + headless UI smoke pass; KeySender modifier +
+  fallback sanity-verified.
 - **Done (v1.7.0)**: grade-aware stacking (same-or-higher grade drinkable once
   the in-effect potion is half consumed; weaker held for duration×margin; rejuv
   fixed 1.0s gate; unknown grades conservative), Triggers tab simplified (potion
@@ -124,6 +139,7 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Build state
 
+- Version `1.8.0` — **Keys tab rework: no per-potion bindings, configurable feed-to-merc modifier, belt mix removed**.  Belt hotkeys ARE the managed columns (Q/W/E/R checkboxes; any managed column can serve any potion type since the slot's content is read each tick).  Merc actions press the belt key + a user-pickable modifier (`behavior["merc_modifier"]`, default Shift — D2R's feed-merc binding).  Belt mix (ratio) hidden from the UI and dropped from the smart refill chain (`desired_kind_for_slot`: layout → column-family → None; `plan_layout_refill`: that → last-drunk kind → any).  `plan_consume`/`_allowed_for` no longer take `bound`; watcher `_pick` uses all managed columns; `config.key()`/`keys_for()` removed; `d2r.keys.FALLBACK_KEYS` (heal Q / mana W / rejuv E, merc same + modifier) covers unreadable-belt presses.  Test suite: **95 tests green**; compileall + headless UI smoke pass; KeySender modifier resolution + fallback sanity-verified.
 - Version `1.7.0` — **grade-aware stacking + trimmed Triggers tab + real merc/player maxes**.  Same-or-higher grade potions may be drunk once the in-effect potion is half consumed (`_effective_cooldown(action, candidate_grade)` → `duration*0.5`); weaker/unknown grades wait `duration * potion_margin()`; rejuv uses the fixed 1.0s gate; config cooldowns only fall back while the belt potion is unknown.  `_pick` now returns a `BeltColumn` (or False=skip / None=plain-key fallback) and `_act` does the gating, so `_ready`/`_effective_cooldown` take the candidate grade.  Triggers tab: potion-values table and class dropdown removed (class auto-detected per snapshot), Safety-margin slider kept with a hint that only describes the slider.  Rejuv defaults 40→25 (`rejuv_potion_at_life`/`_mana`).  Merc true max now from the stats-list item block (`STATSLIST_ITEM_STAT_PTR=0xA8`/`COUNT=0xB0`) — live-verified 199/199 at full vs the base 189 — and the UTF-16 name read at `UNIT_OFFSET_NAME=0x2C` is removed (that offset is not a name; hireling names are a UI resource string; merc is labelled by act-based type).  Player max HP/MP uses `_track_max` (shrinks to the base stat when at/over it, grows while damaged).  Test suite: **95 tests green**; compileall + headless UI smoke pass; live probe (pid 25000) confirms merc 199/199 + empty name + player 303/303.
 - Version `1.5.0` (previous). Test suite: 84 tests green (v1.4.0 added `belt_rows_for`,
   `belt_empty_slots`, `solve_grid_mapping`, refill planner tests, config

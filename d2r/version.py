@@ -4,4 +4,4 @@ Bumped per release.  The UI title, `--version` output, and the documentation all
 reference this so version and code can never drift apart.
 """
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"

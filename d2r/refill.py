@@ -73,17 +73,14 @@ def belt_fill_order(belt_empty: list[int]) -> list[int]:
 
 
 # ----------------------------------------------------------------- smart tier
-def _allowed_for(bound: dict | None, managed, action: str) -> tuple:
-    """Belt column keys ``action`` may actually use (bound AND managed).
+def _allowed_for(managed) -> tuple:
+    """Belt column keys the app may use: every managed column.
 
-    ``bound`` maps action -> [keys] (the configured key bindings); when omitted
-    every managed column is allowed.  Used both by the smart consume planner and
-    by the watcher's column picker so the two always agree."""
+    Since 1.8.0 there are no per-potion key bindings - the watcher reads each
+    belt slot and drinks from whichever managed column holds the right potion,
+    so any managed column may serve any action."""
     managed = set(managed)
-    keys = bound.get(action) if bound else None
-    if keys is None:
-        return tuple(k for k in m.BELT_COLUMN_KEYS if k in managed)
-    return tuple(k for k in keys if k in managed)
+    return tuple(k for k in m.BELT_COLUMN_KEYS if k in managed)
 
 
 def _managed_indices(managed) -> set:
@@ -126,8 +123,7 @@ def _belt_has_kind(kind: str, pc, managed) -> bool:
 
 
 def plan_consume(hp_percent, mana_percent, hp_def, mp_def, max_hp, max_mana,
-                 pc, managed, heal_at, mana_at, rejuv_life, rejuv_mana,
-                 bound=None) -> tuple:
+                 pc, managed, heal_at, mana_at, rejuv_life, rejuv_mana) -> tuple:
     """Smart player-potion plan for one tick (pure).
 
     Returns ``(acts, missing)``.  Each act is ``{"action", "kind", "deficit",
@@ -148,7 +144,7 @@ def plan_consume(hp_percent, mana_percent, hp_def, mp_def, max_hp, max_mana,
 
     if hp_critical or mp_critical:
         if hp_critical and not mp_critical:
-            allowed = _allowed_for(bound, managed, "heal")
+            allowed = _allowed_for(managed)
             if _belt_covering("heal", hp_def, max_hp, pc, allowed):
                 acts.append({"action": "heal", "kind": "heal", "deficit": hp_def,
                              "max_value": max_hp, "reason": f"HP {hp_percent}%"})
@@ -158,7 +154,7 @@ def plan_consume(hp_percent, mana_percent, hp_def, mp_def, max_hp, max_mana,
                              "max_value": max(max_hp, max_mana),
                              "reason": f"HP {hp_percent}% / MP {mana_percent}%"})
         elif mp_critical and not hp_critical:
-            allowed = _allowed_for(bound, managed, "mana")
+            allowed = _allowed_for(managed)
             if _belt_covering("mana", mp_def, max_mana, pc, allowed):
                 acts.append({"action": "mana", "kind": "mana", "deficit": mp_def,
                              "max_value": max_mana, "reason": f"MP {mana_percent}%"})
@@ -185,17 +181,15 @@ def plan_consume(hp_percent, mana_percent, hp_def, mp_def, max_hp, max_mana,
     return acts, missing
 
 
-def desired_kind_for_slot(slot_x: int, layout: dict, belt_content: dict, ratio: dict,
-                          order=("heal", "mana", "rejuv")) -> str | None:
+def desired_kind_for_slot(slot_x: int, layout: dict, belt_content: dict) -> str | None:
     """What potion kind the user wants in belt slot ``slot_x``.
 
     Preference chain (first hit wins):
       1. user-defined per-slot layout (layout[slot_x]).
       2. the dominant kind already in that column (restock the belt column in
          place - keeps the same "type" of potion there).
-      3. a "good mix": the kind with the biggest shortfall against ``ratio``.
-    Returns None when the belt is already at (or above) its target mix and no
-    layout/column preference applies."""
+    Returns None when neither applies (the refill then falls back to the family
+    last drunk, then to any potion)."""
     if layout and layout.get(slot_x) in REFILLABLE_KINDS:
         return layout[slot_x]
     cols = len(m.BELT_COLUMN_KEYS)
@@ -204,23 +198,17 @@ def desired_kind_for_slot(slot_x: int, layout: dict, belt_content: dict, ratio: 
              if s >= 0 and s % cols == col and k in REFILLABLE_KINDS]
     if kinds:
         return Counter(kinds).most_common(1)[0][0]
-    counts = Counter(k for k in (belt_content or {}).values()
-                     if k in REFILLABLE_KINDS)
-    short = {k: int(ratio.get(k, 0)) - counts.get(k, 0) for k in REFILLABLE_KINDS}
-    wanted = [k for k in order if short.get(k, 0) > 0]
-    return max(wanted, key=lambda k: short[k]) if wanted else None
+    return None
 
 
 def plan_layout_refill(belt_empty: list[int], belt_content: dict, potions: list[dict],
-                       layout: dict, ratio: dict, last_kind: str | None = None,
-                       order=("heal", "mana", "rejuv")) -> list[dict]:
+                       layout: dict, last_kind: str | None = None) -> list[dict]:
     """Smart-tier belt refill plan: one click per empty slot (in fill order).
 
-    For each empty slot the desired kind comes from
-    :func:`desired_kind_for_slot` (layout -> column family -> ratio mix); the
-    potion clicked is the lowest-grade inventory potion of that kind.  When the
-    desired kind is out of stock, falls back to the family last drunk
-    (``last_kind``), then to any remaining potion.  Returns
+    For each empty slot the desired kind comes from :func:`desired_kind_for_slot`
+    (layout -> column family); the potion clicked is the lowest-grade inventory
+    potion of that kind.  When the desired kind is out of stock, falls back to
+    the family last drunk (``last_kind``), then to any remaining potion.  Returns
     ``[{"slot", "potion"}, ...]``; the caller clicks one per tick."""
     slots = belt_fill_order([s for s in belt_empty if s >= 0])
     if not slots:
@@ -232,7 +220,7 @@ def plan_layout_refill(belt_empty: list[int], belt_content: dict, potions: list[
         return []
     plan = []
     for slot in slots:
-        kind = desired_kind_for_slot(slot, layout, belt_content, ratio, order=order)
+        kind = desired_kind_for_slot(slot, layout, belt_content)
         pick = None
         if kind and by_kind.get(kind):
             pick = by_kind[kind].pop(0)

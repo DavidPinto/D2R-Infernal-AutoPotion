@@ -5,6 +5,44 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-08-15
+
+Keys tab reworked: no more per-potion key bindings, configurable feed-to-merc
+modifier, belt mix removed.
+
+### Changed
+
+- **No more per-potion key bindings.** The old Health / Mana / Rejuv / Merc
+  key rows on the *Keys* tab are gone.  The app drinks by pressing the belt's
+  own hotkeys (Q/W/E/R) and reads each belt slot to see which potion it holds,
+  so there is nothing to bind — any managed column can serve any potion type.
+  The deprecated `keys` config section stays empty (old configs/profiles still
+  load; it is simply unused).
+- **Keys tab streamlined.** New layout: *Belt columns & hotkeys* (the managed
+  Q/W/E/R checkboxes, which now double as the hotkey set), *Mercenary potion
+  modifier*, *Belt refill*, *Belt plan (smart)* and *Behaviour* — every hint
+  rewritten to match how the app actually decides.
+- **Feed-to-merc modifier is user-pickable.** Merc actions press a configurable
+  modifier together with the belt hotkey (default **Shift**, the same
+  feed-merc binding D2R uses); you can switch to Ctrl or Alt on the *Keys* tab.
+  `KeySender` reads it from `behavior["merc_modifier"]`.
+- **Belt mix (ratio) removed from the UI.** The HP/Mana/Rejuv mix row and its
+  Apply button are hidden.  The smart refill no longer targets a ratio — it
+  fills an empty slot per the per-slot **Belt plan** layout, else restocks the
+  kind dominating that column, else the family last drunk, else any potion.
+  The `ratio` config field is kept for back-compat but is unused.
+- Built-in fallback keys remain only for the rare case where the belt is
+  unreadable (heal→Q, mana→W, rejuv→E, merc same with the modifier) — no UI.
+
+### Added
+
+- `AppConfig.merc_modifier()` / `set_merc_modifier()` (normalises to
+  SHIFT/CTRL/ALT, default SHIFT) and `d2r.keys.resolve_modifier()`.
+- `FALLBACK_KEYS` map in `d2r/keys.py`; `press_key(vk, modifier=...)` replaces
+  the hard-coded `with_shift`.
+- Unit tests for the modifier accessor, `resolve_modifier`, and the fallback
+  keys.  Test suite: **95 tests green** (compileall + headless UI smoke pass).
+
 ## [1.7.0] - 2026-08-14
 
 Grade-aware stacking, smarter triggers UI, and corrected merc/player maxes.

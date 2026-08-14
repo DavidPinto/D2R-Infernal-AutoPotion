@@ -40,10 +40,10 @@ presses the correct belt keys for you.
   potion in all 4 belt corners, press *Scan belt corners*, and the app learns and
   remembers that potion (and its whole family) for your build — no code edits
   needed.
-- **Full QWER belt support.** All four belt columns work; bind an action to
-  multiple columns (`+` button on the *Keys* tab) and the right one is pressed
-  per tick.  When the bound columns have no usable potion, the watcher skips
-  instead of pressing a mismatched column.
+- **Full QWER belt support.** The app drinks by pressing your belt's own
+  hotkeys (Q/W/E/R) and reads each belt slot to see which potion it holds — no
+  per-potion key bindings to configure.  It picks the grade-appropriate column
+  per tick and skips the action when no managed column holds a usable potion.
 - **Profiles & presets.** Save/load named profiles, or apply one-click presets
   (Leveling / Boss farming / Conservative / Mana-heavy) from the *Triggers*
   tab.
@@ -62,14 +62,14 @@ presses the correct belt keys for you.
   first).  Click positions are measured once by hovering two inventory potions
   and pressing F8 — no resolution-specific constants.
 - **Smart potion choice (smart tier).** The watcher decides from the *whole
-  managed belt*, not just the bound column: HP+MP both critical → rejuv; only HP
+  managed belt*, not just one column: HP+MP both critical → rejuv; only HP
   low → heal when a heal that fully covers the deficit is on the belt (else
   rejuv); only MP low → the mana equivalent; non-critical → heal and mana fire
   independently.  On by default, off switch on the *Keys* tab.
 - **Belt plan (per-slot layout).** The *Keys* tab has a 4×4 belt grid — set each
-  slot to Any / HP / Mana / Rejuv — plus an HP/Mana/Rejuv ratio.  Smart-tier
-  refill fills an empty slot with the layout kind, else restocks the kind that
-  dominates that column, else the kind most short vs the ratio.
+  slot to Any / HP / Mana / Rejuv.  Smart-tier refill fills an empty slot with
+  the layout kind, else restocks the kind that already dominates that column,
+  else the family you last drank, else any potion.
 - **Safe by default.** Pauses while inventory / stash / vendor / menus are open,
   never presses keys outside a live game, tracks Battle Orders when computing
   HP/MP percentages, and defaults to **disarmed** — you arm it deliberately.
@@ -113,29 +113,26 @@ Or just double-click `build.bat`.  The spec bundles customtkinter's theme data
 and excludes `numpy` to keep the exe ~14 MB.  The windowed app stores its
 settings in `config/config.json` *next to the exe*.
 
-## Key bindings (default)
+## Key bindings
 
-| Action             | Key | Modifier |
-|--------------------|-----|----------|
-| Health potion      | `Q` | —        |
-| Mana potion        | `W` | —        |
-| Rejuvenation       | `E` | —        |
-| Merc health potion | `Q` | Shift    |
-| Merc rejuv potion  | `E` | Shift    |
+The app uses your belt's own hotkeys — **Q / W / E / R** in D2R's remastered
+controls.  It reads each belt slot to see which potion it holds, so there is
+**nothing to bind**: any managed column can serve any potion type, and the
+watcher picks the grade-appropriate column per tick.
 
-These match the game's **remastered-controls belt layout (QWER)**.  The tool
-must send exactly the keys your belt is bound to in D2R — rebind on the *Keys*
-tab if you use a different profile.  Merc actions add Shift (D2R's feed-merc
-binding).  Rebind any key by clicking its button and pressing the new key; use
-the **`+`** button to bind an action to a *second* belt column (e.g. `Q` + `R`
-for health) — the watcher then picks the grade-appropriate column automatically.
+Mercenary potions are given with the belt hotkey **plus a modifier** — D2R's
+feed-merc binding, **Shift by default**.  Set it to your in-game feed-merc key
+(Shift / Ctrl / Alt) on the *Keys* tab → *Mercenary potion modifier*.
+
+If your belt is bound to different keys in D2R, the app still presses Q/W/E/R —
+re-map your in-game belt hotkeys to match (the app has no per-potion bindings).
 
 ### Managed belt columns
 
-Below the bindings, the *Keys* tab has a checkbox per belt column (Q/W/E/R).
-Uncheck a column to keep the app entirely off it — it will **not** drink from
-that column and will **not** refill it, so you keep manual control of potions
-there.  All columns are managed by default.
+The *Keys* tab has a checkbox per belt column (Q/W/E/R).  Uncheck a column to
+keep the app entirely off it — it will **not** drink from that column and will
+**not** refill it, so you keep manual control of potions there.  All columns are
+managed by default.
 
 ## Belt refill from inventory
 
@@ -150,7 +147,7 @@ Clicking a potion in D2R fills the first empty belt slot the engine chooses, so
 the app drives the *potion choice* (it tracks the belt's fill order).  With the
 **smart tier** on, that choice follows your **Belt plan**: each empty slot is
 filled per your per-slot layout, else restocked to the kind dominating that
-column, else to the kind most short of its HP/Mana/Rejuv ratio.
+column, else the family you last drank, else any potion.
 
 **One-time click calibration.** The app must know where inventory cells are on
 screen (varies by resolution/window size).  With your inventory open in-game:
@@ -274,17 +271,19 @@ HP% <= rejuv_at_life  OR  MP% < rejuv_at_mana  → rejuv
 elif HP% <= heal_at                             → health potion
 elif MP% <= mana_at                             → mana potion
 if merc alive:
-    merc HP% <= merc_rejuv_at                   → Shift + rejuv
-    elif merc HP% <= merc_heal_at               → Shift + heal
+    merc HP% <= merc_rejuv_at                   → modifier + rejuv
+    elif merc HP% <= merc_heal_at               → modifier + heal
 ```
+
+(The merc modifier is Shift by default and is configurable on the *Keys* tab.)
 
 With the **smart tier** on (default), the watcher instead calls `plan_consume`
 over the whole *managed* belt: it takes rejuv when HP and MP are both in the
 rejuv range, drinks a specific heal/mana only when that kind is on a managed
 belt slot and fully covers the deficit (smallest sufficient grade), and falls
-back to rejuv otherwise.  Each potion the watcher computes the HP/MP deficit,
-then across the *bound* belt columns picks the smallest potion grade that covers
-it (strongest if none cover); it skips the action entirely when the bound
+back to rejuv otherwise.  For each potion the watcher computes the HP/MP deficit,
+then across the *managed* belt columns picks the smallest potion grade that covers
+it (strongest if none cover); it skips the action entirely when the managed
 columns hold no usable potion.  Belt columns are read per-slot from the item
 table — column = `X % 4` (`Q`/`W`/`E`/`R`) and next-to-drink is the lowest `X`
 in that column, matching how the game shifts potions down the belt.

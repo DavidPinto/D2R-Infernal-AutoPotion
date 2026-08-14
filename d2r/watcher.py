@@ -227,7 +227,7 @@ class PotionWatcher:
         one stat is low.  Plain tier: rejuv wins when HP or MP is critical,
         otherwise heal/mana are checked independently.  The merc is always
         handled separately with its own thresholds, heal preferred over rejuv
-        when the merc is merely hurt.  Each use is grade-aware: the best bound
+        when the merc is merely hurt.  Each use is grade-aware: the best managed
         belt column for the deficit is chosen when the belt is readable."""
         if self.config.smart_enabled():
             self._smart_tick(snap)
@@ -269,7 +269,6 @@ class PotionWatcher:
             mana_at=cfg.threshold("mana_potion_at"),
             rejuv_life=cfg.threshold("rejuv_potion_at_life"),
             rejuv_mana=cfg.threshold("rejuv_potion_at_mana"),
-            bound={a: self.config.keys_for(a) for a in ("heal", "mana", "rejuv")},
         )
         for kind in missing:
             action = kind
@@ -294,20 +293,19 @@ class PotionWatcher:
                           f"Merc HP {snap.merc_hp_percent}%", snap, t)
 
     def _pick(self, kind: str, deficit: int, max_value: int,
-              action: str, snap: m.PlayerSnapshot) -> m.BeltColumn | None | bool:
+              snap: m.PlayerSnapshot) -> m.BeltColumn | None | bool:
         """Choose the belt column to drink from.
 
         Returns the BeltColumn to drink, False when the belt is known to have no
-        usable potion of ``kind`` in the bound columns (the key is NOT pressed
+        usable potion of ``kind`` in the managed columns (the key is NOT pressed
         rather than waste a mismatched potion), or None when the belt content is
-        unreadable (the caller falls back to the plain configured key)."""
+        unreadable (the caller falls back to the action's default key)."""
         pc = snap.potion_counts
         if not pc.ok:
             return None
-        # Only columns the user lets the app manage (and that are bound).
-        allowed = tuple(
-            k for k in m.BELT_COLUMN_KEYS
-            if k in self.config.keys_for(action) and k in self.config.managed_columns())
+        # Any managed column may serve any action: the potion type is read from
+        # the slot, so there are no per-potion key bindings (since 1.8.0).
+        allowed = tuple(self.config.managed_columns())
         idx = pc.choose_belt_column(kind, deficit, max_value, allowed_keys=allowed)
         if idx is None:
             return False
@@ -318,7 +316,7 @@ class PotionWatcher:
         """Grade-aware drink for one action: pick a column (or skip if the belt
         has no potion of the needed kind), apply the grade-aware gate, then press
         that column's key."""
-        col = self._pick(kind, deficit, max_value, action, snap)
+        col = self._pick(kind, deficit, max_value, snap)
         if col is False:
             if action not in self._out_of_stock:
                 self._out_of_stock.add(action)
@@ -434,8 +432,7 @@ class PotionWatcher:
         if self.config.smart_enabled():
             plan = refill_mod.plan_layout_refill(
                 empty, pc.belt_slots, self.reader.inventory_potions(),
-                self.config.belt_layout(), self.config.belt_ratio(),
-                last_kind=self._last_kind or None)
+                self.config.belt_layout(), last_kind=self._last_kind or None)
         else:
             plan = refill_mod.plan_refills(empty, self.reader.inventory_potions(),
                                            last_kind=self._last_kind or None)

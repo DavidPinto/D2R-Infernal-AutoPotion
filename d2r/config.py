@@ -81,13 +81,11 @@ DEFAULTS = {
         "merc_heal": 6.0,
         "merc_rejuv": 2.0,
     },
-    "keys": {
-        "heal": "Q",
-        "mana": "W",
-        "rejuv": "E",
-        "merc_heal": "Q",
-        "merc_rejuv": "E",
-    },
+    # Deprecated since 1.8.0: potions are no longer bound to a key by type.
+    # The app drinks via the belt's own hotkeys (Q/W/E/R) and reads each slot
+    # to see which potion it holds.  Kept as an empty dict so old persisted
+    # configs and profiles still load (the section is simply unused).
+    "keys": {},
     "behavior": {
         "enabled": False,
         "auto_focus_game": True,
@@ -110,6 +108,9 @@ DEFAULTS = {
         # Global hotkey that toggles arm/disarm while you are in-game.
         # Format "Ctrl+Alt+F12" / "Ctrl+Shift+F9"; "" = disabled (default).
         "toggle_hotkey": "",
+        # Modifier held together with a belt hotkey (Q/W/E/R) to give that
+        # potion to the mercenary - D2R's feed-merc binding (default Shift).
+        "merc_modifier": "Shift",
     },
     # Manual max-HP/MP overrides (0 = auto / observed).  Set these to your real
     # geared maximums so the % is correct before the observed max has latched.
@@ -176,19 +177,14 @@ class AppConfig:
         # Unknown names default to a conservative 2.0 s (no key spam).
         return float(self.cooldowns.get(name, DEFAULTS["cooldowns"].get(name, 2.0)))
 
-    def keys_for(self, name: str) -> list[str]:
-        """All keys bound to an action, in order (a binding may be a plain string
-        for one key or a list for several belt columns, e.g. heal -> [Q, R])."""
-        raw = self.keys.get(name, DEFAULTS["keys"].get(name, ""))
-        if isinstance(raw, (list, tuple)):
-            return [str(k).strip() for k in raw if str(k).strip()]
-        s = str(raw).strip()
-        return [s] if s else []
+    def merc_modifier(self) -> str:
+        """Modifier key held with a belt hotkey to feed the merc a potion."""
+        name = str(self.behavior.get("merc_modifier", "Shift")).strip().upper()
+        return name if name in ("SHIFT", "CTRL", "ALT") else "SHIFT"
 
-    def key(self, name: str) -> str:
-        # Primary (first) key for an action; "" when unbound (press -> no-op).
-        keys = self.keys_for(name)
-        return keys[0] if keys else ""
+    def set_merc_modifier(self, name: str) -> None:
+        norm = str(name or "").strip().upper()
+        self.behavior["merc_modifier"] = norm if norm in ("SHIFT", "CTRL", "ALT") else "SHIFT"
 
     @property
     def enabled(self) -> bool:

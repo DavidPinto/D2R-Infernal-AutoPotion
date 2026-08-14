@@ -41,6 +41,17 @@ VK.update({
 # Reverse map for friendly display of captured keys.
 VK_NAME = {v: k for k, v in VK.items()}
 
+# Modifiers the tool can hold together with a belt hotkey (feed-to-merc).
+MODIFIER_KEYS = {"SHIFT": VK["SHIFT"], "CTRL": VK["CTRL"], "ALT": VK["ALT"]}
+
+# Built-in fallback key per drink action, used only while the belt content is
+# unreadable (the watcher normally reads each slot and presses that column's
+# key, so there are no user-configurable per-potion bindings since 1.8.0).
+FALLBACK_KEYS = {
+    "heal": "Q", "mana": "W", "rejuv": "E",
+    "merc_heal": "Q", "merc_rejuv": "E",
+}
+
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 
@@ -128,19 +139,28 @@ def _send(vk: int, keyup: bool) -> bool:
     return sent != 0
 
 
-def press_key(vk: int, with_shift: bool = False) -> bool:
-    """Press (and release) a virtual key, optionally while holding Shift.
+def resolve_modifier(name: str) -> int | None:
+    """Resolve a modifier name ("SHIFT" / "CTRL" / "ALT") to its VK code."""
+    if name is None:
+        return None
+    return MODIFIER_KEYS.get(str(name).strip().upper())
+
+
+def press_key(vk: int, modifier: str | None = None) -> bool:
+    """Press (and release) a virtual key, optionally while holding a modifier.
 
     The tiny sleep between down/up gives the game a chance to sample the key;
-    Shift is released AFTER the main key so the game sees the full combo."""
+    the modifier is released AFTER the main key so the game sees the full
+    combo (e.g. Shift+Q for feeding the merc a potion)."""
+    mod_vk = resolve_modifier(modifier)
     ok = True
-    if with_shift:
-        ok = _send(VK["SHIFT"], keyup=False) and ok
+    if mod_vk is not None:
+        ok = _send(mod_vk, keyup=False) and ok
     ok = _send(vk, keyup=False) and ok
     time.sleep(0.02)
     ok = _send(vk, keyup=True) and ok
-    if with_shift:
-        ok = _send(VK["SHIFT"], keyup=True) and ok
+    if mod_vk is not None:
+        ok = _send(mod_vk, keyup=True) and ok
     return ok
 
 
@@ -178,17 +198,18 @@ class KeySender:
     def press(self, action: str, key: str | None = None) -> bool:
         """Press the key for an action ('heal', 'mana', 'merc_heal', ...).
 
-        ``key`` overrides the action's configured binding (used by the grade-aware
-        watcher to press a specific belt column).  Merc actions implicitly add
-        Shift.  Returns False if the binding is unresolved or the injection was
-        rejected by the OS."""
-        with_shift = action.startswith("merc_")
-        key_name = key if key else self.config.key(action)
+        ``key`` is the belt column to press (the watcher always passes the
+        column that holds the potion); when omitted, the built-in fallback key
+        for the action is used (belt unreadable).  Merc actions add the
+        configured feed-to-merc modifier (default Shift).  Returns False if the
+        binding is unresolved or the injection was rejected by the OS."""
+        modifier = self.config.merc_modifier() if action.startswith("merc_") else None
+        key_name = key if key else FALLBACK_KEYS.get(action, "")
         vk = self.resolve(key_name)
         if vk is None:
             return False
         self._ensure_game_focused()
-        ok = press_key(vk, with_shift=with_shift)
+        ok = press_key(vk, modifier=modifier)
         if ok and self.config.behavior.get("sound", True):
             self.chime()
         return ok

@@ -37,12 +37,10 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(c.enabled)
         self.assertEqual(c.threshold("healing_potion_at"), 80)
         self.assertEqual(c.cooldown("heal"), 4.0)
-        self.assertEqual(c.key("heal"), "Q")
+        self.assertEqual(c.merc_modifier(), "SHIFT")
         # Unknown names fall back safely (never trigger / no spam), never raise.
         self.assertEqual(c.threshold("nope"), 0)
         self.assertEqual(c.cooldown("nope"), 2.0)
-        self.assertEqual(c.key("nope"), "")
-        self.assertEqual(c.keys_for("nope"), [])
 
     def test_rejuv_defaults_are_critical(self):
         c = cfg.AppConfig.load()
@@ -50,16 +48,15 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(c.threshold("rejuv_potion_at_life"), 25)
         self.assertEqual(c.threshold("rejuv_potion_at_mana"), 25)
 
-    def test_keys_for_supports_multiple_columns(self):
+    def test_merc_modifier_accessor(self):
         c = cfg.AppConfig.load()
-        self.assertEqual(c.keys_for("heal"), ["Q"])          # plain string binding
-        c.keys["heal"] = ["Q", "R"]                          # 4th-column binding
-        self.assertEqual(c.keys_for("heal"), ["Q", "R"])
-        self.assertEqual(c.key("heal"), "Q")                 # primary key unchanged
-        c.keys["rejuv"] = "R"                                # bind rejuv to 4th column
-        self.assertEqual(c.keys_for("rejuv"), ["R"])
-        c.keys["mana"] = []
-        self.assertEqual(c.keys_for("mana"), [])
+        self.assertEqual(c.merc_modifier(), "SHIFT")        # default
+        c.set_merc_modifier("Ctrl")
+        self.assertEqual(c.merc_modifier(), "CTRL")
+        c.set_merc_modifier("alt")
+        self.assertEqual(c.merc_modifier(), "ALT")
+        c.set_merc_modifier("Bogus")                        # unknown -> stays Shift
+        self.assertEqual(c.merc_modifier(), "SHIFT")
 
     def test_persist_round_trip(self):
         c = cfg.AppConfig.load()
@@ -76,21 +73,21 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(c.apply_preset("Boss farming"))
         self.assertEqual(c.threshold("healing_potion_at"), 85)
         self.assertEqual(c.cooldown("rejuv"), 1.5)
-        # Keys are left untouched by a preset.
-        self.assertEqual(c.key("heal"), "Q")
+        # Keys/behaviour are left untouched by a preset.
+        self.assertEqual(c.merc_modifier(), "SHIFT")
         self.assertFalse(c.apply_preset("No such preset"))
 
     def test_profiles_round_trip(self):
         c = cfg.AppConfig.load()
         c.thresholds["healing_potion_at"] = 42
-        c.keys["heal"] = "F1"
+        c.max_override["player_hp"] = 123
         c.save_profile("Zerker")
         self.assertIn("Zerker", c.profile_names())
         c.apply_preset("Leveling")
         self.assertNotEqual(c.threshold("healing_potion_at"), 42)
         self.assertTrue(c.load_profile("Zerker"))
         self.assertEqual(c.threshold("healing_potion_at"), 42)
-        self.assertEqual(c.key("heal"), "F1")
+        self.assertEqual(c.max_override.get("player_hp"), 123)
         c.delete_profile("Zerker")
         self.assertNotIn("Zerker", c.profile_names())
         self.assertFalse(c.load_profile("Zerker"))
@@ -652,46 +649,23 @@ class RefillTests(unittest.TestCase):
                                ("Q", "W", "E", "R"), 80, 60, 40, 40)
         self.assertEqual(acts[0]["action"], "heal")
 
-    def test_plan_consume_bound_keys_restrict_covering(self):
-        # heal is bound only to R (which is managed) -> covering heal found there.
-        pc = self._pc([self._col("R", 605), self._col("Q", 531)])
-        from d2r.refill import plan_consume
-        acts, _ = plan_consume(
-            25, 100, 150, 0, 200, 200, pc, ("Q", "W", "E", "R"),
-            80, 60, 40, 40, bound={"heal": ["R"], "mana": ["W"], "rejuv": ["E"]})
-        self.assertEqual(acts[0]["action"], "heal")
-        # Bound heal to Q, which only holds a rejuv -> no covering heal.
-        acts, _ = plan_consume(
-            25, 100, 150, 0, 200, 200, pc, ("Q", "W", "E", "R"),
-            80, 60, 40, 40, bound={"heal": ["Q"], "mana": ["W"], "rejuv": ["E"]})
-        self.assertEqual(acts[0]["action"], "rejuv")
-
     # ------------------------------------------------------- smart layout
     def test_desired_kind_layout_wins(self):
         from d2r.refill import desired_kind_for_slot
-        self.assertEqual(desired_kind_for_slot(0, {0: "mana"}, {1: "heal"},
-                                               {"heal": 8, "mana": 6, "rejuv": 2}), "mana")
+        self.assertEqual(desired_kind_for_slot(0, {0: "mana"}, {1: "heal"}), "mana")
 
     def test_desired_kind_column_family(self):
         from d2r.refill import desired_kind_for_slot
         # Column 0 (slots 0,4,8,12) already holds heal -> restock heal there.
         belt = {4: "heal", 8: "heal"}
-        self.assertEqual(desired_kind_for_slot(0, {}, belt,
-                                               {"heal": 8, "mana": 6, "rejuv": 2}), "heal")
+        self.assertEqual(desired_kind_for_slot(0, {}, belt), "heal")
 
-    def test_desired_kind_ratio_shortfall(self):
+    def test_desired_kind_none_without_preference(self):
         from d2r.refill import desired_kind_for_slot
-        # Column 0 empty; rejuv already at/above its target, heal is short.
+        # Empty column, no layout pin -> no preference; refill falls back.
         belt = {1: "rejuv", 2: "rejuv", 5: "rejuv"}
-        self.assertEqual(desired_kind_for_slot(0, {}, belt,
-                                               {"heal": 8, "mana": 6, "rejuv": 2}), "heal")
-
-    def test_desired_kind_none_when_mix_satisfied(self):
-        from d2r.refill import desired_kind_for_slot
-        belt = {0: "heal", 1: "mana", 4: "rejuv"}
-        # Slot 15 (column 3, empty column) and every ratio target is met.
-        self.assertIsNone(desired_kind_for_slot(15, {}, belt,
-                                                {"heal": 1, "mana": 1, "rejuv": 1}))
+        self.assertIsNone(desired_kind_for_slot(0, {}, belt))
+        self.assertIsNone(desired_kind_for_slot(15, {}, belt))
 
     def test_plan_layout_refill_follows_layout_and_fill_order(self):
         from d2r.refill import plan_layout_refill
@@ -700,41 +674,47 @@ class RefillTests(unittest.TestCase):
                 self._potion(602, "heal", 0, x=1, y=0, unit_id=1),
                 self._potion(608, "mana", 1, x=2, y=0, unit_id=2),
                 self._potion(530, "rejuv", 0, x=3, y=0, unit_id=3),
-            ], {3: "mana", 7: "rejuv"}, {"heal": 8, "mana": 6, "rejuv": 2})
+            ], {3: "mana", 7: "rejuv"})
         self.assertEqual([(p["slot"], p["potion"]["kind"]) for p in plan],
                          [(3, "mana"), (7, "rejuv")])
 
-    def test_plan_layout_refill_ratio_fallback(self):
+    def test_plan_layout_refill_last_kind_fallback(self):
         from d2r.refill import plan_layout_refill
         belt_content = {1: "heal", 2: "mana", 5: "heal", 6: "mana"}   # col 0 empty
+        # No layout/column pref -> falls back to the family last drunk.
         plan = plan_layout_refill(
             [0], belt_content, [
                 self._potion(602, "heal", 0, unit_id=1),
                 self._potion(530, "rejuv", 0, unit_id=2),
-            ], {}, {"heal": 2, "mana": 2, "rejuv": 1})
+            ], {}, last_kind="rejuv")
         self.assertEqual(plan[0]["potion"]["kind"], "rejuv")
+        plan = plan_layout_refill(
+            [0], belt_content, [
+                self._potion(602, "heal", 0, unit_id=1),
+                self._potion(530, "rejuv", 0, unit_id=2),
+            ], {}, last_kind="heal")
+        self.assertEqual(plan[0]["potion"]["kind"], "heal")
 
-    def test_plan_layout_refill_last_kind_fallback(self):
+    def test_plan_layout_refill_last_kind_fallback_layout(self):
         from d2r.refill import plan_layout_refill
         plan = plan_layout_refill(
             [0], {}, [self._potion(602, "heal", 0, unit_id=1)],
-            {0: "mana"}, {"heal": 8, "mana": 6, "rejuv": 2}, last_kind="heal")
+            {0: "mana"}, last_kind="heal")
         self.assertEqual(plan[0]["potion"]["kind"], "heal")
 
     def test_plan_layout_refill_no_duplicate_use(self):
         from d2r.refill import plan_layout_refill
         plan = plan_layout_refill(
-            [0, 1], {}, [self._potion(602, "heal", 0, unit_id=10)],
-            {}, {"heal": 8, "mana": 6, "rejuv": 2})
+            [0, 1], {}, [self._potion(602, "heal", 0, unit_id=10)], {})
         self.assertEqual(len(plan), 1)
         self.assertEqual(plan[0]["potion"]["unit_id"], 10)
 
     def test_plan_layout_refill_empty_inputs(self):
         from d2r.refill import plan_layout_refill
-        self.assertEqual(plan_layout_refill([], {}, [], {}, {}), [])
-        self.assertEqual(plan_layout_refill([3], {}, [], {}, {}), [])
+        self.assertEqual(plan_layout_refill([], {}, [], {}), [])
+        self.assertEqual(plan_layout_refill([3], {}, [], {}), [])
         self.assertEqual(plan_layout_refill(
-            [3], {}, [self._potion(532, "other", -1)], {}, {}), [])
+            [3], {}, [self._potion(532, "other", -1)], {}), [])
 
 
 class FakeSender:
@@ -848,7 +828,6 @@ class WatcherTests(unittest.TestCase):
 
     def test_derived_cooldown_from_potion_duration(self):
         w = self._watcher()
-        w.config.keys["heal"] = ["Q", "R"]
         # Super heal (606) restores over 10.24 s -> effective cooldown ~12.3 s.
         snap = self._belt_snap(hp=140, columns=[self._col("Q", 602), self._col("R", 606)])
         w._tick(snap)
@@ -884,7 +863,6 @@ class WatcherTests(unittest.TestCase):
 
     def test_tick_repeats_same_grade_after_half_duration(self):
         w = self._watcher()
-        w.config.keys["heal"] = ["Q", "R"]
         snap = self._belt_snap(hp=140, columns=[self._col("Q", 602), self._col("R", 606)])
         w._tick(snap)                                  # drinks Super on R (grade 4)
         self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
@@ -895,7 +873,6 @@ class WatcherTests(unittest.TestCase):
 
     def test_tick_holds_weaker_grade_until_margin(self):
         w = self._watcher()
-        w.config.keys["heal"] = ["Q", "R"]
         full = self._belt_snap(hp=140, columns=[self._col("Q", 602), self._col("R", 606)])
         w._tick(full)                                  # Super heal on R (grade 4)
         self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
@@ -933,7 +910,6 @@ class WatcherTests(unittest.TestCase):
 
     def test_grade_picks_best_column(self):
         w = self._watcher()
-        w.config.keys["heal"] = ["Q", "R"]   # 4th column now bound to heal
         # Q = Minor (45), R = Greater (270); deficit 60 -> R is the only cover.
         snap = self._belt_snap(hp=140, columns=[self._col("Q", 602), self._col("R", 605)])
         w._tick(snap)
@@ -942,7 +918,6 @@ class WatcherTests(unittest.TestCase):
 
     def test_grade_prefers_smallest_covering(self):
         w = self._watcher()
-        w.config.keys["heal"] = ["Q", "R"]
         # max 150, hp 120 -> 80% (triggers); deficit 30, both grades cover -> Q.
         snap = self._belt_snap(hp=120, mana=150, max_hp=150, max_mana=150,
                                columns=[self._col("Q", 602), self._col("R", 603)])
@@ -951,14 +926,12 @@ class WatcherTests(unittest.TestCase):
 
     def test_grade_uses_strongest_when_none_covers(self):
         w = self._watcher()
-        w.config.keys["heal"] = ["Q", "R"]
         snap = self._belt_snap(hp=100, mana=190, columns=[self._col("Q", 602), self._col("R", 603)])
         w._tick(snap)   # deficit 100, neither covers -> Light (R)
         self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
 
     def test_grade_skips_when_belt_lacks_kind(self):
         w = self._watcher()
-        w.config.keys["heal"] = "Q"
         # Q holds Thawing ("other"); pressing it would waste a wrong potion.
         snap = self._belt_snap(hp=70, columns=[self._col("Q", 532)])
         w._tick(snap)
@@ -969,30 +942,26 @@ class WatcherTests(unittest.TestCase):
 
     def test_grade_4th_column_rejuv(self):
         w = self._watcher()
-        w.config.keys["rejuv"] = "R"   # rejuv bound to the 4th column
         snap = self._belt_snap(hp=20, columns=[self._col("R", 531)])
         w._tick(snap)
         self.assertEqual(w.sender.pressed_keys, [("rejuv", "R")])
 
-    def test_grade_merc_uses_bound_column_with_shift(self):
+    def test_grade_merc_uses_managed_column(self):
         w = self._watcher()
-        w.config.keys["merc_heal"] = ["Q", "R"]
         # Player healthy so only the merc's heal fires; R covers the merc deficit.
         snap = self._belt_snap(hp=190, mana=190, merc=80,
                                columns=[self._col("Q", 602), self._col("R", 605)])
         w._tick(snap)
         self.assertEqual(w.sender.pressed_keys, [("merc_heal", "R")])
 
-    def test_grade_falls_back_to_binding_when_belt_unreadable(self):
+    def test_falls_back_to_default_key_when_belt_unreadable(self):
         w = self._watcher()
-        w.config.keys["heal"] = "Q"
         s = self._snap(hp=70, mana=90)   # potion_counts.ok stays False
         w._tick(s)
         self.assertEqual(w.sender.pressed_keys, [("heal", None)])
 
     def test_pick_respects_managed_columns(self):
         w = self._watcher()
-        w.config.keys["heal"] = ["Q", "R"]
         # HP 45% (above the rejuv line) so only the heal branch runs.
         w.config.set_managed_columns(["Q", "W", "E"])
         snap = self._belt_snap(hp=90, mana=90, max_hp=200, max_mana=200,
@@ -1007,7 +976,6 @@ class WatcherTests(unittest.TestCase):
 
     def test_last_kind_tracked_for_refill(self):
         w = self._watcher()
-        w.config.keys["heal"] = ["Q", "R"]
         snap = self._belt_snap(hp=120, mana=150, max_hp=200, max_mana=200,
                                columns=[self._col("Q", 602), self._col("R", 605)])
         w._tick(snap)
@@ -1027,7 +995,6 @@ class WatcherTests(unittest.TestCase):
 
     def test_smart_uses_rejuv_when_heal_does_not_cover(self):
         w = self._watcher()
-        w.config.keys["rejuv"] = ["R"]
         # Minor heal (30) does not cover a 150 deficit -> rejuv on R.
         snap = self._belt_snap(hp=50, mana=190, max_hp=200, max_mana=200,
                                columns=[self._col("Q", 602), self._col("R", 531)])
@@ -1044,7 +1011,6 @@ class WatcherTests(unittest.TestCase):
 
     def test_smart_disabled_uses_plain_tier(self):
         w = self._watcher()
-        w.config.keys["rejuv"] = ["R"]
         snap = self._belt_snap(hp=50, mana=190, max_hp=200, max_mana=200,
                                columns=[self._col("Q", 605), self._col("R", 531)])
         w._tick(snap)                                  # smart: covering heal wins
@@ -1053,6 +1019,26 @@ class WatcherTests(unittest.TestCase):
         w.sender.pressed, w.sender.pressed_keys = [], []
         w._tick(snap)                                  # plain: rejuv wins on critical
         self.assertEqual(w.sender.pressed_keys, [("rejuv", "R")])
+
+
+class KeysTests(unittest.TestCase):
+    def test_resolve_modifier(self):
+        from d2r.keys import resolve_modifier
+        self.assertEqual(resolve_modifier("SHIFT"), 0x10)
+        self.assertEqual(resolve_modifier("ctrl"), 0x11)
+        self.assertEqual(resolve_modifier("Alt"), 0x12)
+        self.assertIsNone(resolve_modifier("WIN"))
+        self.assertIsNone(resolve_modifier(""))
+        self.assertIsNone(resolve_modifier(None))
+
+    def test_fallback_keys_cover_every_action(self):
+        from d2r.keys import FALLBACK_KEYS, resolve_key
+        # Fallback bindings only kick in while the belt is unreadable, so they
+        # must always resolve to a real key (else a degraded read would no-op).
+        for action, name in FALLBACK_KEYS.items():
+            self.assertIsNotNone(resolve_key(name), f"{action} -> {name}")
+        self.assertEqual(FALLBACK_KEYS["heal"], "Q")
+        self.assertEqual(FALLBACK_KEYS["merc_heal"], "Q")
 
 
 class HotkeyTests(unittest.TestCase):
