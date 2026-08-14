@@ -20,10 +20,19 @@ from .process import Process
 
 
 class GameReader:
-    def __init__(self, proc: Process):
+    def __init__(self, proc: Process,
+                 codes: m.PotionCodes | None = None,
+                 merc_txtfiles: frozenset | None = None):
         """Attach to a game process, resolve offsets, and prepare the state
-        trackers (running maxima + manual max overrides for % computation)."""
+        trackers (running maxima + manual max overrides for % computation).
+
+        ``codes`` is the potion txtFileNo table (defaults to the built-in
+        Infernal Edition codes) and ``merc_txtfiles`` the hireling ids to match
+        for the merc (defaults to Guard + Infernal hireling) - both come from
+        the active combo in config when a user calibrates a different build."""
         self.proc = proc
+        self.codes: m.PotionCodes = codes if codes is not None else m.default_potion_codes()
+        self.merc_txtfiles: frozenset = merc_txtfiles if merc_txtfiles is not None else m.MERC_TXTFILES_DEFAULT
         self.offsets: Offsets = calculate_offsets(proc)
         # A signature hit can be a false positive (e.g. a coincidental byte match
         # in an unrelated module).  Verify the resolved UnitTable actually points
@@ -148,8 +157,9 @@ class GameReader:
 
     # ------------------------------------------------------------- merc
     # Hireling txtFileNo values.  338 = standard NPC_GUARD; 271 = the Infernal
-    # Edition (Warlock) hireling.  Add more here if a different merc type is hired.
-    MERC_TXTFILES = frozenset({338, 271})
+    # Edition (Warlock) hireling.  Overridable per combo (self.merc_txtfiles)
+    # via the Calibrate tab for other builds / merc types.
+    MERC_TXTFILES = m.MERC_TXTFILES_DEFAULT
 
     def _read_merc(self) -> dict | None:
         """Read the mercenary unit, or None when no merc unit is in the world.
@@ -183,7 +193,7 @@ class GameReader:
                 sc = self.proc.read_ptr(stats_list_ex + m.STATSLIST_STAT_COUNT) if stats_list_ex else 0
                 raw = self._read_stats(sp, sc)
                 has_life = m.STAT["Life"] in raw and m.STAT["MaxLife"] in raw
-                if txt in self.MERC_TXTFILES and has_life:
+                if txt in self.merc_txtfiles and has_life:
                     if matched is None:
                         matched = (unit, raw, txt)
                         matched_corpse = is_corpse
@@ -281,7 +291,7 @@ class GameReader:
                 if len(buf) < 0x158:
                     break
                 if int.from_bytes(buf[0x00:0x04], "little") == m.ITEM_UNIT_TYPE:
-                    kind = m.potion_kind(int.from_bytes(buf[0x04:0x08], "little"))
+                    kind = self.codes.kind(int.from_bytes(buf[0x04:0x08], "little"))
                     if kind:
                         loc = int.from_bytes(buf[0x0C:0x10], "little")
                         ud = int.from_bytes(buf[0x10:0x18], "little")
@@ -307,11 +317,62 @@ class GameReader:
             column.count = len(entries)
             next_txt = min(entries, key=lambda e: e[0])[1]   # lowest slot = next drunk
             column.txt = next_txt
-            column.kind = m.potion_kind(next_txt)
-            column.grade = m.potion_grade(next_txt)
+            column.kind = self.codes.kind(next_txt)
+            column.grade = self.codes.grade(next_txt)
 
+        counts.codes = self.codes
         counts.ok = seen > 0
         return counts
+
+    # ------------------------------------------------------- calibration scan
+    def scan_item_codes(self) -> dict:
+        """Raw per-slot belt + inventory txtFileNos for the Calibrate tab.
+
+        Unlike :meth:`_read_item_counts` (which only classifies known potions)
+        this reports *every* item the player owns, so the user can match the
+        code of a potion they placed in a known belt corner:
+        ``{"ok", "error", "belt": [{"x", "txt"}], "inventory": {txt: count}}``."""
+        out: dict = {"ok": False, "error": "", "belt": [], "inventory": {}}
+        if not self.offsets.UnitTable:
+            out["error"] = "UnitTable offset not resolved."
+            return out
+        try:
+            base = self._base()
+            table = base + self.offsets.UnitTable + m.UNIT_TABLE_ITEM_OFFSET
+            main_id = 0
+            pu, _ = self._find_player_unit()
+            if pu:
+                main_id = self.proc.read_u32(pu + m.UNIT_OFFSET_UNIT_ID)
+            buckets = self.proc.read_bytes(table, m.UNIT_TABLE_ENTRIES * 8)
+            if len(buckets) < m.UNIT_TABLE_ENTRIES * 8:
+                out["error"] = "Could not read the item table."
+                return out
+            seen = 0
+            for i in range(m.UNIT_TABLE_ENTRIES):
+                unit = int.from_bytes(buckets[i * 8:i * 8 + 8], "little")
+                while unit and seen < 512:
+                    seen += 1
+                    buf = self.proc.read_bytes(unit, 0x160)
+                    if len(buf) < 0x158:
+                        break
+                    if int.from_bytes(buf[0x00:0x04], "little") != m.ITEM_UNIT_TYPE:
+                        unit = int.from_bytes(buf[0x150:0x158], "little")
+                        continue
+                    txt = int.from_bytes(buf[0x04:0x08], "little")
+                    loc = int.from_bytes(buf[0x0C:0x10], "little")
+                    ud = int.from_bytes(buf[0x10:0x18], "little")
+                    owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
+                    if loc == m.ITEM_LOC_BELT and (not main_id or owner == main_id):
+                        path = int.from_bytes(buf[0x38:0x40], "little")
+                        x = self.proc.read_u16(path + m.ITEM_PATH_OFFSET_X) if path else -1
+                        out["belt"].append({"x": x, "txt": txt})
+                    elif loc == m.ITEM_LOC_INVENTORY and main_id and owner == main_id:
+                        out["inventory"][txt] = out["inventory"].get(txt, 0) + 1
+                    unit = int.from_bytes(buf[0x150:0x158], "little")
+            out["ok"] = seen > 0
+        except Exception as exc:
+            out["error"] = str(exc)
+        return out
 
     # -------------------------------------------------------------- menus
     def open_menus(self) -> dict:
@@ -550,12 +611,12 @@ class GameReader:
                 t = self.proc.read_u32(u + m.UNIT_OFFSET_TXTFILE)
                 ic = self.proc.read_u8(u + m.UNIT_OFFSET_IS_CORPSE)
                 mcounts[t] = mcounts.get(t, 0) + 1
-                if t == m.NPC_GUARD:
+                if t in self.merc_txtfiles:
                     merc_seen = (u, ic)
                 u = self.proc.read_ptr(u + m.UNIT_OFFSET_NEXT)
         lines.append(f"  MonsterTable: txtFileNo counts (scanned {scanned} units) = {mcounts}")
         if merc_seen:
-            lines.append(f"    merc(338) unit=0x{merc_seen[0]:X} isCorpse={merc_seen[1]}")
+            lines.append(f"    merc({sorted(self.merc_txtfiles)}) unit=0x{merc_seen[0]:X} isCorpse={merc_seen[1]}")
         # Dump every monster unit's name so we can identify the merc's real id.
         lines.append("  MonsterTable: units (txtFileNo, name, isCorpse, hasLife) =")
         dumped = 0
@@ -610,6 +671,9 @@ class GameReader:
 
         lines.append("")
         lines.append("=== Potions (belt / inventory) ===")
+        lines.append("  active codes: " + ("custom combo" if self.codes.entries
+                     else "built-in Infernal defaults") +
+                     f"  ({len(self.codes.entries)} txtFileNos)")
         counts = self._read_item_counts()
         if not counts.ok:
             lines.append("  item table unreadable (offsets unresolved or not in a game)")
@@ -631,6 +695,6 @@ class GameReader:
                         loc = self.proc.read_u32(u + m.ITEM_OFFSET_LOCATION)
                         ud = self.proc.read_ptr(u + m.ITEM_OFFSET_UNIT_DATA)
                         owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
-                        lines.append(f"      txt={txt} kind={m.potion_kind(txt)} loc={loc} owner={owner}")
+                        lines.append(f"      txt={txt} kind={self.codes.kind(txt)} loc={loc} owner={owner}")
                     u = self.proc.read_ptr(u + m.ITEM_OFFSET_NEXT)
         return lines

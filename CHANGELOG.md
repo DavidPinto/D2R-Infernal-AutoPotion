@@ -5,6 +5,40 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-14
+
+User calibration: end users can teach the app their build's potion codes.
+
+### Added
+
+- **Calibrate tab**: a guided way to define a named *game version / mods* combo
+  that maps potion kinds/grades to the txtFileNo codes a given client build
+  actually uses (the Infernal Edition renumbered classic D2R by +15, and other
+  versions/mods renumber differently).
+- **Belt/inventory code scanner**: place a known potion (e.g. Minor Mana) in a
+  belt corner, click *Scan belt & inventory*, and the tool lists every belt slot
+  (x, column, row) and inventory txtFileNo so the matching code is easy to find.
+- **Potion table editor**: per-row Kind / Grade / txtFileNo entry (add/remove
+  rows), with restore amounts derived from kind+grade so custom codes behave
+  exactly like the built-in ones (minor 30 → full 100%, rejuv 35/100%).
+- **Named combos** persisted in `config/config.json` (`combos`): switchable,
+  deleteable, resettable to the built-in Infernal defaults; applies live to the
+  reader without a reconnect.
+- **Merc hireling txtFileNo override** per combo (default `338, 271`) for builds
+  whose hireling id differs — Diagnostics reports every monster txtFileNo so the
+  id is discoverable.
+- Diagnostics now states whether the active potion table is custom or built-in
+  and reports `kind` per item against the active codes.
+
+### Changed
+
+- `GameReader` takes `codes` / `merc_txtfiles` (defaulting to the built-in
+  Infernal table + `338/271`); the UI passes the active combo.  Config grew
+  `combo`/`combos` accessors (`potion_codes()`, `merc_txtfiles_set()`).
+- `PotionCounts.choose_belt_column` uses the active `PotionCodes` table instead
+  of the hard-coded module constants (module-level `potion_kind/grade/restore`
+  still mirror the built-in defaults).
+
 ## [1.2.0] - 2026-08-14
 
 Grade-aware potion use and full 4th belt column support.

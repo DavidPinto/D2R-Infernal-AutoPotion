@@ -4,6 +4,7 @@ Tabs:
   Dashboard   - live HP / Mana / Merc bars, character info, arm/disarm toggle
   Triggers    - threshold + cooldown sliders
   Keys        - belt-key bindings + behaviour switches
+  Calibrate   - teach the app your build's potion txtFileNo codes (per version/mods)
   Diagnostics - offset scan + read sanity (the tool we use to verify 3.0.91636)
   Log         - event history
 """
@@ -52,6 +53,38 @@ HOTKEY_PRESETS = [
 ]
 
 _potion_labels = {"heal": "heal", "mana": "mana", "rejuv": "rejuv", "other": "other"}
+
+# Grade dropdown labels per potion family (Calibrate tab).  Index in the list
+# is the numeric grade; "other" is a utility potion (grade -1).
+_CALIB_GRADES = {
+    "heal": ["minor", "light", "greater", "super", "full"],
+    "mana": ["minor", "light", "greater", "super", "full"],
+    "rejuv": ["rejuv", "full rejuv"],
+    "other": ["utility"],
+}
+
+_CALIB_INSTRUCTIONS = (
+    "The app identifies potions by their base-item txtFileNo code, and these "
+    "codes change between game versions / mods (the Infernal Edition renumbered "
+    "classic D2R by +15).  If your potions show as 'other' on the Dashboard, or "
+    "you play a different version/mods, teach the app the codes here:\n\n"
+    "1. Go in-game and open your belt/inventory.  Place a potion you KNOW (e.g. "
+    "Minor Mana / Minor Health - available from the start) in a belt corner.\n"
+    "2. Click 'Scan belt & inventory' and find that potion's txtFileNo in the "
+    "list (e.g. slot x=0 (Q, bottom) -> txt=608 = Light Mana on Infernal).\n"
+    "3. In the table, set the row's Kind + Grade to match, and enter that "
+    "txtFileNo number.\n"
+    "4. Repeat for every potion you use (heal grades, mana grades, rejuv, and "
+    "utility).  Anything not listed is treated as 'other' and never pressed.\n"
+    "5. Give the combo a name (e.g. \"Infernal 3.0.91636\") and click "
+    "'Save as combo'.  The app switches to it immediately.\n\n"
+    "Player/merc offsets match the Go reference build and are found by "
+    "signature scan, so they normally need no calibration.  The one item-specific "
+    "value besides potions is your hireling's txtFileNo (default 338/271): if the "
+    "Dashboard shows 'no merc' while one is hired, set it from the Diagnostics "
+    "monster-table dump.  If player/merc values ever read wrong, run the "
+    "Diagnostics scan - it pinpoints exactly which signature failed."
+)
 
 
 class MainApp(ctk.CTk):
@@ -165,11 +198,12 @@ class MainApp(ctk.CTk):
     def _build_tabs(self):
         self.tabs = ctk.CTkTabview(self, corner_radius=10)
         self.tabs.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        for name in ("Dashboard", "Triggers", "Keys", "Diagnostics", "Log"):
+        for name in ("Dashboard", "Triggers", "Keys", "Calibrate", "Diagnostics", "Log"):
             self.tabs.add(name)
         self._build_dashboard(self.tabs.tab("Dashboard"))
         self._build_triggers(self.tabs.tab("Triggers"))
         self._build_keys(self.tabs.tab("Keys"))
+        self._build_calibrate(self.tabs.tab("Calibrate"))
         self._build_diagnostics(self.tabs.tab("Diagnostics"))
         self._build_log(self.tabs.tab("Log"))
 
@@ -659,6 +693,295 @@ class MainApp(ctk.CTk):
         self.config.save()
         self._refresh_hotkey()
 
+    # ---------------------------------------------------------- calibrate
+    def _build_calibrate(self, parent):
+        """Tab where users teach the app their build's potion txtFileNo codes.
+
+        Each named combo maps potion kinds/grades to txtFileNo numbers; the
+        active combo is what the reader classifies against."""
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=4, pady=4)
+
+        w.heading(scroll, "Game version / mods combo").pack(anchor="w", padx=12, pady=(10, 4))
+        combo_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        combo_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
+        ctk.CTkLabel(combo_row, text="Combo name:").pack(side="left")
+        self._combo_entry = ctk.CTkEntry(combo_row, width=170, height=28)
+        self._combo_entry.pack(side="left", padx=(6, 0))
+        ctk.CTkLabel(combo_row, text="Notes:").pack(side="left", padx=(10, 0))
+        self._combo_notes_entry = ctk.CTkEntry(combo_row, width=240, height=28)
+        self._combo_notes_entry.pack(side="left", padx=(6, 0))
+        ctk.CTkButton(combo_row, text="Save as combo", width=120, height=28,
+                      command=self._save_combo).pack(side="left", padx=(10, 0))
+
+        combo_row2 = ctk.CTkFrame(scroll, fg_color="transparent")
+        combo_row2.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
+        ctk.CTkLabel(combo_row2, text="Active:").pack(side="left")
+        self._combo_menu = ctk.CTkOptionMenu(combo_row2, values=[""], width=220, height=28)
+        self._combo_menu.set("")
+        self._combo_menu.pack(side="left", padx=(6, 0))
+        ctk.CTkButton(combo_row2, text="Apply", width=70, height=28,
+                      command=self._apply_combo).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(combo_row2, text="Load into editor", width=130, height=28,
+                      command=self._load_combo_into_editor).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(combo_row2, text="Delete", width=70, height=28,
+                      fg_color="#7a4a4a", hover_color="#8c5555",
+                      command=self._delete_combo).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(combo_row2, text="Reset to built-in defaults", width=180, height=28,
+                      fg_color="#444", hover_color="#555",
+                      command=self._reset_codes).pack(side="left", padx=(6, 0))
+        self._combo_state = ctk.CTkLabel(scroll, text="", text_color="gray70",
+                                         font=ctk.CTkFont(size=11))
+        self._combo_state.pack(anchor="w", padx=12, pady=(2, 6))
+
+        w.heading(scroll, "Potion txtFileNo codes").pack(anchor="w", padx=12, pady=(4, 4))
+        self._calib_rows: list[dict] = []
+        self._calib_table = ctk.CTkFrame(scroll, fg_color="transparent")
+        self._calib_table.pack(anchor="w", padx=12, fill="x")
+        hdr = ctk.CTkFrame(self._calib_table, fg_color="transparent")
+        hdr.pack(anchor="w", fill="x")
+        ctk.CTkLabel(hdr, text="Kind", width=90, anchor="w",
+                     font=ctk.CTkFont(size=11, weight="bold")).pack(side="left")
+        ctk.CTkLabel(hdr, text="Grade", width=120, anchor="w",
+                     font=ctk.CTkFont(size=11, weight="bold")).pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(hdr, text="txtFileNo", width=90, anchor="w",
+                     font=ctk.CTkFont(size=11, weight="bold")).pack(side="left", padx=(8, 0))
+        self._add_calib_row()
+        self._add_calib_row("mana")
+        self._add_calib_row("rejuv")
+        ctk.CTkButton(scroll, text="+ Add potion row", width=150, height=28,
+                      command=lambda: self._add_calib_row()).pack(anchor="w", padx=12, pady=(6, 2))
+
+        merc_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        merc_row.pack(anchor="w", padx=12, fill="x", pady=(8, 2))
+        ctk.CTkLabel(merc_row, text="Merc hireling txtFileNo(s):").pack(side="left")
+        self._calib_merc_entry = ctk.CTkEntry(merc_row, width=160, height=28)
+        self._calib_merc_entry.pack(side="left", padx=(6, 0))
+        w.hint(scroll, "Comma-separated (e.g. 271, 338). Only needed if the merc "
+                       "reads as 'no merc'; find the id in Diagnostics.").pack(
+                           anchor="w", padx=12, pady=(0, 8))
+
+        w.heading(scroll, "Find your codes (belt / inventory scan)").pack(
+            anchor="w", padx=12, pady=(6, 4))
+        scan_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        scan_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
+        ctk.CTkButton(scan_row, text="Scan belt & inventory", width=170, height=28,
+                      command=self._scan_codes).pack(side="left")
+        ctk.CTkButton(scan_row, text="Clear", width=70, height=28, fg_color="#444",
+                      hover_color="#555", command=lambda: self._set_calib_scan("")).pack(
+                          side="left", padx=(6, 0))
+        self._calib_scan_box = ctk.CTkTextbox(scroll, height=130, wrap="none", font=ctk.CTkFont(family="Consolas", size=11))
+        self._calib_scan_box.pack(anchor="w", padx=12, fill="x", pady=(0, 6))
+        self._calib_scan_box.configure(state="disabled")
+
+        w.heading(scroll, "Instructions").pack(anchor="w", padx=12, pady=(8, 4))
+        w.hint(scroll, _CALIB_INSTRUCTIONS).pack(anchor="w", padx=12, pady=(0, 14))
+
+        self._refresh_combo_menu()
+        self._refresh_combo_state()
+
+    def _add_calib_row(self, kind: str = "heal", grade_label: str = "", txt: str = ""):
+        """Append a kind/grade/txt row to the potion table."""
+        frame = ctk.CTkFrame(self._calib_table, fg_color="transparent")
+        frame.pack(anchor="w", fill="x", pady=2)
+        kind_menu = ctk.CTkOptionMenu(frame, values=list(_CALIB_GRADES.keys()),
+                                      width=90, height=26)
+        kind_menu.set(kind)
+        kind_menu.pack(side="left")
+        grades = _CALIB_GRADES[kind]
+        grade_menu = ctk.CTkOptionMenu(frame, values=grades, width=120, height=26)
+        grade_menu.set(grade_label if grade_label in grades else grades[0])
+        grade_menu.pack(side="left", padx=(8, 0))
+        txt_entry = ctk.CTkEntry(frame, width=90, justify="center")
+        txt_entry.insert(0, txt)
+        txt_entry.pack(side="left", padx=(8, 0))
+        remove_btn = ctk.CTkButton(frame, text="✕", width=30, height=26, fg_color="#7a4a4a",
+                                   hover_color="#8c5555")
+        remove_btn.pack(side="left", padx=(8, 0))
+        row = {"kind": kind_menu, "grade": grade_menu, "txt": txt_entry,
+               "frame": frame, "remove": remove_btn}
+        kind_menu.configure(command=lambda k, r=row: self._on_calib_kind(r, k))
+        remove_btn.configure(command=lambda r=row: self._remove_calib_row(r))
+        self._calib_rows.append(row)
+        if len(self._calib_rows) > 1:
+            remove_btn.configure(state="normal")
+
+    def _on_calib_kind(self, row: dict, kind: str):
+        """Refit a row's grade dropdown when its kind changes."""
+        grades = _CALIB_GRADES[kind]
+        menu = row["grade"]
+        menu.configure(values=grades)
+        menu.set(grades[0] if menu.get() not in grades else menu.get())
+
+    def _remove_calib_row(self, row: dict):
+        """Delete a potion row (keep at least one)."""
+        if len(self._calib_rows) <= 1:
+            return
+        self._calib_rows.remove(row)
+        row["frame"].destroy()
+
+    def _collect_calib_potions(self) -> list:
+        """Read the editor table as [[txt, kind, grade], ...] (invalid rows skip)."""
+        rows = []
+        for row in self._calib_rows:
+            kind = row["kind"].get()
+            grade_label = row["grade"].get()
+            try:
+                txt = int(row["txt"].get().strip())
+            except ValueError:
+                continue
+            if kind == "other":
+                grade = -1
+            else:
+                grades = _CALIB_GRADES[kind]
+                grade = grades.index(grade_label) if grade_label in grades else 0
+            rows.append([txt, kind, grade])
+        return rows
+
+    def _load_combo_into_editor(self):
+        """Populate the table + merc field from the combo selected in the menu."""
+        body = self.config.combos.get(self._combo_menu.get())
+        if not body:
+            self._emit_log("Select a saved combo first.", "error")
+            return
+        for row in list(self._calib_rows):
+            self._remove_calib_row(row)
+        for p in body.get("potions", []):
+            try:
+                txt, kind, grade = int(p[0]), str(p[1]), int(p[2])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if kind in _CALIB_GRADES:
+                grades = _CALIB_GRADES[kind]
+                label = "utility" if kind == "other" else (
+                    grades[grade] if 0 <= grade < len(grades) else grades[0])
+                self._add_calib_row(kind, label, str(txt))
+        merc = ", ".join(str(v) for v in body.get("merc", []))
+        self._calib_merc_entry.delete(0, "end")
+        self._calib_merc_entry.insert(0, merc)
+        self._combo_notes_entry.delete(0, "end")
+        self._combo_notes_entry.insert(0, str(body.get("notes", "")))
+        self._emit_log(f"Combo '{self._combo_menu.get()}' loaded into the editor.", "info")
+
+    def _parse_merc_ids(self) -> list:
+        """Parse the merc txtFileNo field into a list of ints (empty ok)."""
+        out = []
+        for part in self._calib_merc_entry.get().replace(",", " ").split():
+            try:
+                out.append(int(part))
+            except ValueError:
+                continue
+        return out
+
+    def _save_combo(self):
+        """Save the editor contents as a named combo and switch to it."""
+        name = self._combo_entry.get().strip()
+        if not name:
+            self._emit_log("Enter a combo name first.", "error")
+            return
+        self.config.save_combo(name, self._collect_calib_potions(),
+                               self._parse_merc_ids(), self._combo_notes_entry.get().strip())
+        self._apply_codes_to_reader()
+        self._refresh_combo_menu()
+        self._refresh_combo_state()
+        self._emit_log(f"Combo '{name}' saved and active.", "info")
+
+    def _apply_combo(self):
+        """Switch to the combo selected in the dropdown."""
+        name = self._combo_menu.get()
+        if not name:
+            self._emit_log("Select a saved combo first.", "error")
+            return
+        if not self.config.set_active_combo(name):
+            self._emit_log(f"Combo '{name}' not found.", "error")
+            return
+        self._apply_codes_to_reader()
+        self._refresh_combo_state()
+        self._emit_log(f"Combo '{name}' is now active.", "info")
+
+    def _delete_combo(self):
+        """Remove the selected combo."""
+        name = self._combo_menu.get()
+        if not name:
+            return
+        self.config.delete_combo(name)
+        self._refresh_combo_menu()
+        self._refresh_combo_state()
+        self._emit_log(f"Combo '{name}' deleted.", "info")
+
+    def _reset_codes(self):
+        """Return to the built-in Infernal potion table."""
+        self.config.set_active_combo("")
+        self._apply_codes_to_reader()
+        for row in list(self._calib_rows):
+            self._remove_calib_row(row)
+        self._calib_merc_entry.delete(0, "end")
+        self._combo_notes_entry.delete(0, "end")
+        self._refresh_combo_menu()
+        self._refresh_combo_state()
+        self._emit_log("Back to built-in potion defaults.", "info")
+
+    def _apply_codes_to_reader(self):
+        """Push the active combo's codes into the live reader (no reconnect)."""
+        if self.reader is not None:
+            self.reader.codes = self.config.potion_codes()
+            self.reader.merc_txtfiles = self.config.merc_txtfiles_set()
+
+    def _refresh_combo_menu(self):
+        names = self.config.combo_names()
+        self._combo_menu.configure(values=names or [""])
+        self._combo_menu.set(self.config.combo if self.config.combo in names else "")
+
+    def _refresh_combo_state(self):
+        if self.config.combo:
+            self._combo_state.configure(
+                text=f"Using '{self.config.combo}' - "
+                     f"{len(self.config.potion_codes().entries)} potion codes.")
+        else:
+            self._combo_state.configure(text="Using built-in Infernal potion defaults.")
+
+    def _scan_codes(self):
+        """Scan belt/inventory txtFileNos in the background (never freezes UI)."""
+        if not self.reader:
+            self._emit_log("Connect to the game first, then scan.", "error")
+            return
+        self._set_calib_scan("Scanning… (stay in a game)")
+        threading.Thread(target=self._do_scan_codes, daemon=True).start()
+
+    def _do_scan_codes(self):
+        data = self.reader.scan_item_codes()
+        lines = ["Belt slots (x = belt slot index; column = x%4, bottom row x<4, top row x>=4):", ""]
+        if data["ok"]:
+            for e in sorted(data["belt"], key=lambda e: e.get("x", -1)):
+                x = e.get("x", -1)
+                key = m.BELT_COLUMN_KEYS[x % 4] if x >= 0 else "?"
+                row = "top" if x >= 4 else "bottom"
+                lines.append(f"  x={x}  {key}/{row}  txt={e['txt']}")
+            if not data["belt"]:
+                lines.append("  (no potions on the belt right now)")
+            lines.append("")
+            lines.append("Inventory (txtFileNo -> count):")
+            if data["inventory"]:
+                for txt, count in sorted(data["inventory"].items()):
+                    lines.append(f"  {txt} -> {count}")
+            else:
+                lines.append("  (nothing owned in the personal inventory)")
+        elif data["error"]:
+            lines.append(f"Scan failed: {data['error']}")
+        else:
+            lines.append("Item table unreadable - are you in a game?")
+        lines.append("")
+        lines.append("Hint: place a KNOWN potion (e.g. Minor Mana) in a belt corner,"
+                     " scan, then enter its txt above.")
+        text = "\n".join(lines)
+        self.after(0, lambda: self._set_calib_scan(text))
+
+    def _set_calib_scan(self, text: str):
+        self._calib_scan_box.configure(state="normal")
+        self._calib_scan_box.delete("1.0", "end")
+        self._calib_scan_box.insert("end", text)
+        self._calib_scan_box.configure(state="disabled")
+
     # --------------------------------------------------------- diagnostics
     def _build_diagnostics(self, parent):
         top = ctk.CTkFrame(parent, fg_color="transparent")
@@ -794,7 +1117,8 @@ class MainApp(ctk.CTk):
             return
         try:
             proc = Process.attach()
-            reader = GameReader(proc)
+            reader = GameReader(proc, codes=self.config.potion_codes(),
+                                merc_txtfiles=self.config.merc_txtfiles_set())
             watcher = PotionWatcher(reader, self.config, on_event=self.on_event)
             watcher.start()
             self.proc, self.reader, self.watcher = proc, reader, watcher

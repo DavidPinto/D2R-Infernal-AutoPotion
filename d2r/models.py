@@ -117,6 +117,9 @@ for _t in POTION_TXTFILE_OTHER:
     POTION_KIND_BY_TXTFILE[_t] = "other"
 
 # Weakest -> strongest grade order per family (grade-aware column selection).
+# These are the *default* codes for the Infernal Edition build; users may teach
+# the app different codes for their version/mods via the Calibrate tab (see
+# PotionCodes + config "combos").
 POTION_GRADES: dict[str, list[int]] = {
     "heal": [602, 603, 604, 605, 606],
     "mana": [607, 608, 609, 610, 611],
@@ -135,6 +138,110 @@ POTION_RESTORE_POINTS = {
     607: 30, 608: 60, 609: 120, 610: 200,
 }
 POTION_RESTORE_PERCENT = {606: 100, 611: 100, 530: 35, 531: 100}
+
+# Restore semantics by (kind, grade), so user-calibrated codes get the correct
+# amounts without hard-coding each txtFileNo.
+POTION_KINDS = ("heal", "mana", "rejuv", "other")
+_GRADE_RESTORE_POINTS = (30, 60, 120, 200)   # grades 0..3 of heal/mana
+_FULL_GRADE_RESTORE_PERCENT = 100            # grade 4 (Full) of heal/mana
+_REJUV_RESTORE_PERCENT = (35, 100)           # rejuv grades
+
+# Default hireling txtFileNos (player-owned NPC): 338 Guard (classic D2R),
+# 271 the Infernal Edition Warlock hireling.  Users can override per combo.
+MERC_TXTFILES_DEFAULT = frozenset({338, 271})
+
+
+@dataclass
+class PotionEntry:
+    """One user-defined potion: its base-item txtFileNo + family + grade."""
+    txt: int
+    kind: str      # "heal" | "mana" | "rejuv" | "other"
+    grade: int     # 0-based within kind; -1 for "other"
+
+
+class PotionCodes:
+    """Lookup table that maps potion txtFileNos to kind/grade/restore.
+
+    Built from a list of :class:`PotionEntry` (empty -> unknown potions are
+    ignored, never mis-classified).  The built-in Infernal codes are produced by
+    :func:`default_potion_codes`; the Calibrate tab replaces that table with the
+    user's own codes for their game version/mods."""
+    def __init__(self, entries: list[PotionEntry] | None = None):
+        self.entries: dict[int, PotionEntry] = {}
+        for e in entries or []:
+            if e.kind in POTION_KINDS and (e.grade >= 0 or e.kind == "other"):
+                self.entries[e.txt] = e
+
+    def kind(self, txt: int) -> str | None:
+        e = self.entries.get(txt)
+        return e.kind if e else None
+
+    def grade(self, txt: int) -> int:
+        e = self.entries.get(txt)
+        return e.grade if e else -1
+
+    def restore_points(self, txt: int) -> int:
+        e = self.entries.get(txt)
+        if not e:
+            return 0
+        if e.kind == "rejuv":
+            return 0
+        if 0 <= e.grade < len(_GRADE_RESTORE_POINTS):
+            return _GRADE_RESTORE_POINTS[e.grade]
+        return 0
+
+    def restore_percent(self, txt: int) -> int | None:
+        e = self.entries.get(txt)
+        if not e:
+            return None
+        if e.kind == "rejuv":
+            return _REJUV_RESTORE_PERCENT[e.grade] if 0 <= e.grade < len(_REJUV_RESTORE_PERCENT) else None
+        if e.grade == 4:
+            return _FULL_GRADE_RESTORE_PERCENT
+        return None
+
+    def restore(self, txt: int, max_value: int) -> int:
+        """Hit points / mana restored by a potion at a maximum of ``max_value``."""
+        pct = self.restore_percent(txt)
+        if pct is not None:
+            return max(0, int(max_value * pct / 100))
+        return self.restore_points(txt)
+
+    def grade_names(self, kind: str) -> list[str]:
+        """Sorted potion grade labels for a kind (UI dropdowns)."""
+        if kind == "other":
+            return ["utility"]
+        labels = ["minor", "light", "greater", "super", "full"]
+        if kind == "rejuv":
+            labels = ["rejuv", "full rejuv"]
+        return labels
+
+
+def default_potion_codes() -> PotionCodes:
+    """The built-in Infernal Edition potion table (single source of truth)."""
+    entries: list[PotionEntry] = []
+    for kind, txts in POTION_GRADES.items():
+        for grade, txt in enumerate(txts):
+            entries.append(PotionEntry(txt=txt, kind=kind, grade=grade))
+    for txt in POTION_TXTFILE_OTHER:
+        entries.append(PotionEntry(txt=txt, kind="other", grade=-1))
+    return PotionCodes(entries)
+
+
+def potion_entries_from_lists(rows) -> list[PotionEntry]:
+    """Build PotionEntry objects from persisted [[txt, kind, grade], ...] rows.
+    Invalid rows are dropped; later rows override earlier ones for a txt."""
+    out: list[PotionEntry] = []
+    for row in rows or []:
+        try:
+            txt = int(row[0])
+            kind = str(row[1]).strip().lower()
+            grade = int(row[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if kind in POTION_KINDS and (grade >= 0 or kind == "other"):
+            out.append(PotionEntry(txt=txt, kind=kind, grade=grade))
+    return out
 
 
 def potion_kind(txt_file: int) -> str | None:
@@ -237,6 +344,9 @@ class PotionCounts:
     columns: list = field(default_factory=lambda: [
         BeltColumn(key=k, index=i) for i, k in enumerate(BELT_COLUMN_KEYS)])
     ok: bool = False
+    # PotionCodes used for grade/restore decisions (set by the reader from the
+    # active combo); None -> the built-in Infernal defaults.
+    codes: object = None
 
     def choose_belt_column(self, kind: str, deficit: int, max_value: int,
                            allowed_keys: tuple = BELT_COLUMN_KEYS) -> int | None:
@@ -245,14 +355,15 @@ class PotionCounts:
         Among the bound columns holding a potion of ``kind``, prefers the smallest
         grade whose restore covers the deficit; when none does, uses the strongest
         available.  Returns None when no usable column exists."""
+        codes = self.codes if self.codes is not None else default_potion_codes()
         candidates = [
             c for c in self.columns
             if c.kind == kind and c.count > 0 and c.grade >= 0
-            and c.key in allowed_keys and potion_restore(c.txt, max_value) > 0
+            and c.key in allowed_keys and codes.restore(c.txt, max_value) > 0
         ]
         if not candidates:
             return None
-        covering = [c for c in candidates if potion_restore(c.txt, max_value) >= deficit]
+        covering = [c for c in candidates if codes.restore(c.txt, max_value) >= deficit]
         if covering:
             return min(covering, key=lambda c: c.grade).index
         return max(candidates, key=lambda c: c.grade).index

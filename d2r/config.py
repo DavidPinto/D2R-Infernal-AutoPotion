@@ -103,6 +103,13 @@ DEFAULTS = {
         "player_mp": 0,
         "merc_hp": 0,
     },
+    # Named "game version / mods" combos (Calibrate tab).  Each combo teaches the
+    # app which potion txtFileNo codes (and optional merc hireling txtFileNo) the
+    # user's build uses.  "combo" = the active combo name; "" = built-in Infernal
+    # defaults.  A combo body is:
+    #   {"potions": [[txt, kind, grade], ...], "merc": [int, ...], "notes": str}
+    "combos": {},
+    "combo": "",
 }
 
 
@@ -116,6 +123,9 @@ class AppConfig:
     # Active profile name ("" = none / ad-hoc settings) and saved named profiles.
     profile: str = ""
     profiles: dict = field(default_factory=dict)
+    # Named game version/mods combos + the active combo name ("" = built-in).
+    combos: dict = field(default_factory=dict)
+    combo: str = ""
 
     # ----------------------------------------------------------- accessors
     # All accessors fall back to the factory default if a key is missing from
@@ -179,6 +189,11 @@ class AppConfig:
                 k: v for k, v in data.get("profiles", {}).items()
                 if isinstance(v, dict) and k
             }
+            cfg.combos = {
+                k: v for k, v in data.get("combos", {}).items()
+                if isinstance(v, dict) and k
+            }
+            cfg.combo = str(data.get("combo", ""))
             return cfg
         except Exception:
             return cls()
@@ -189,6 +204,8 @@ class AppConfig:
         self.cooldowns = dict(DEFAULTS["cooldowns"])
         self.keys = dict(DEFAULTS["keys"])
         self.behavior = dict(DEFAULTS["behavior"])
+        self.combos = dict(DEFAULTS["combos"])
+        self.combo = ""
 
     # ------------------------------------------------------------- profiles
     PROFILE_SECTIONS = ("thresholds", "cooldowns", "keys", "max_override")
@@ -249,3 +266,83 @@ class AppConfig:
         self.cooldowns.update(dict(preset["cooldowns"]))
         self.save()
         return True
+
+    # ------------------------------------------------------------- combos
+    def combo_names(self) -> list[str]:
+        """Saved combo names, sorted for a stable dropdown."""
+        return sorted(self.combos.keys())
+
+    def active_combo(self) -> dict | None:
+        """The active combo's body, or None when using built-in defaults."""
+        body = self.combos.get(self.combo)
+        return body if isinstance(body, dict) else None
+
+    def potion_codes(self) -> "m.PotionCodes":
+        """Potion table for the active combo, or the built-in Infernal defaults."""
+        from . import models as m
+        body = self.active_combo()
+        if body:
+            entries = m.potion_entries_from_lists(body.get("potions"))
+            if entries:
+                return m.PotionCodes(entries)
+        return m.default_potion_codes()
+
+    def merc_txtfiles_set(self) -> frozenset:
+        """Hireling txtFileNos for the active combo, or the built-in default."""
+        from . import models as m
+        body = self.active_combo()
+        ids = body.get("merc") if body else None
+        if ids:
+            out = set()
+            for v in ids:
+                try:
+                    out.add(int(v))
+                except (TypeError, ValueError):
+                    pass
+            if out:
+                return frozenset(out)
+        return m.MERC_TXTFILES_DEFAULT
+
+    def save_combo(self, name: str, potions: list | None = None,
+                   merc: list | None = None, notes: str = "") -> bool:
+        """Persist a named combo (potions as [[txt, kind, grade], ...]) and make
+        it active.  Returns False when the name is empty."""
+        name = str(name).strip()
+        if not name:
+            return False
+        rows = []
+        for r in (potions or []):
+            try:
+                rows.append([int(r[0]), str(r[1]).strip(), int(r[2])])
+            except (TypeError, ValueError, IndexError):
+                continue
+        merc_ids = []
+        for v in (merc or []):
+            try:
+                merc_ids.append(int(v))
+            except (TypeError, ValueError):
+                continue
+        self.combos[name] = {
+            "potions": rows,
+            "merc": merc_ids,
+            "notes": str(notes),
+        }
+        self.combo = name
+        self.save()
+        return True
+
+    def set_active_combo(self, name: str) -> bool:
+        """Switch the active combo ("" resets to built-in defaults)."""
+        name = str(name).strip()
+        if name and name not in self.combos:
+            return False
+        self.combo = name
+        self.save()
+        return True
+
+    def delete_combo(self, name: str) -> None:
+        """Remove a combo; resetting the active name when it was the one deleted."""
+        self.combos.pop(name, None)
+        if self.combo == name:
+            self.combo = ""
+        self.save()

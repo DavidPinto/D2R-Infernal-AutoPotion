@@ -95,6 +95,28 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(c.threshold("healing_potion_at"), 80)
         self.assertEqual(c.cooldown("heal"), 4.0)
 
+    def test_combos_round_trip(self):
+        c = cfg.AppConfig.load()
+        self.assertEqual(c.combo_names(), [])
+        c.save_combo("MyMod", [[587, "heal", 0], [588, "heal", 1]], [999], "notes")
+        self.assertIn("MyMod", c.combo_names())
+        self.assertEqual(c.combo, "MyMod")
+        self.assertEqual(c.potion_codes().kind(587), "heal")
+        self.assertEqual(c.potion_codes().kind(602), None)   # combo replaces, not merges
+        self.assertEqual(c.merc_txtfiles_set(), frozenset({999}))
+        c.save()
+        d = cfg.AppConfig.load()
+        self.assertEqual(d.combo, "MyMod")
+        self.assertEqual(d.potion_codes().kind(588), "heal")
+        self.assertEqual(d.merc_txtfiles_set(), frozenset({999}))
+        # Back to built-in defaults.
+        self.assertTrue(d.set_active_combo(""))
+        self.assertEqual(d.potion_codes().kind(602), "heal")
+        self.assertEqual(d.merc_txtfiles_set(), frozenset({338, 271}))
+        d.delete_combo("MyMod")
+        self.assertEqual(d.combo_names(), [])
+        self.assertFalse(d.set_active_combo("Nope"))
+
 
 class ModelsTests(unittest.TestCase):
     def test_potion_kinds(self):
@@ -168,6 +190,55 @@ class ModelsTests(unittest.TestCase):
         # 35% (70/200) does not cover a 100-deficit; Full Rejuv does.
         self.assertEqual(pc.choose_belt_column("rejuv", 100, 200), 3)
         self.assertEqual(pc.choose_belt_column("rejuv", 50, 200), 0)
+
+    def test_potion_codes_custom_table(self):
+        codes = m.PotionCodes([
+            m.PotionEntry(587, "heal", 0), m.PotionEntry(591, "heal", 4),
+            m.PotionEntry(515, "rejuv", 0), m.PotionEntry(516, "rejuv", 1),
+            m.PotionEntry(512, "other", -1),
+        ])
+        self.assertEqual(codes.kind(587), "heal")
+        self.assertEqual(codes.grade(587), 0)
+        self.assertEqual(codes.kind(516), "rejuv")
+        self.assertIsNone(codes.kind(602))     # not part of this table
+        self.assertEqual(codes.grade(602), -1)
+        self.assertEqual(codes.restore(587, 200), 30)   # heal grade 0 -> 30 points
+        self.assertEqual(codes.restore(591, 200), 200)  # full heal -> 100%
+        self.assertEqual(codes.restore(515, 200), 70)   # rejuv 35% of max
+        self.assertEqual(codes.restore(516, 200), 200)  # full rejuv
+        self.assertEqual(codes.restore(512, 200), 0)    # utility
+        self.assertEqual(codes.grade_names("heal"), ["minor", "light", "greater", "super", "full"])
+        self.assertEqual(codes.grade_names("rejuv"), ["rejuv", "full rejuv"])
+        self.assertEqual(codes.grade_names("other"), ["utility"])
+
+    def test_default_potion_codes_match_constants(self):
+        codes = m.default_potion_codes()
+        self.assertEqual(codes.kind(602), "heal")
+        self.assertEqual(codes.kind(611), "mana")
+        self.assertEqual(codes.kind(530), "rejuv")
+        self.assertEqual(codes.kind(532), "other")
+        self.assertEqual(codes.restore(605, 200), 200)
+        self.assertEqual(codes.restore(608, 200), 60)
+        self.assertEqual(codes.grade(606), 4)
+
+    def test_potion_entries_from_lists_filters_bad_rows(self):
+        entries = m.potion_entries_from_lists(
+            [[602, "heal", 0], ["oops"], [531, "rejuv", 1], [528, "other", -1], [1, "bogus", 0]])
+        self.assertEqual([(e.txt, e.kind, e.grade) for e in entries],
+                         [(602, "heal", 0), (531, "rejuv", 1), (528, "other", -1)])
+
+    def test_choose_belt_column_uses_custom_codes(self):
+        codes = m.PotionCodes([m.PotionEntry(587, "heal", 0),
+                               m.PotionEntry(588, "heal", 1)])
+        q = m.BeltColumn(key="Q", index=0, txt=587, kind="heal", grade=0, count=1)
+        r = m.BeltColumn(key="R", index=3, txt=588, kind="heal", grade=1, count=1)
+        pc = self._pc([q, r])
+        pc.codes = codes
+        # 587 (30) vs 588 (60): a 50-deficit needs Light (R), 20 is covered by Q.
+        self.assertEqual(pc.choose_belt_column("heal", 50, 200), 3)
+        self.assertEqual(pc.choose_belt_column("heal", 20, 200), 0)
+        # 602 is not in this custom table -> no candidate.
+        self.assertIsNone(pc.choose_belt_column("mana", 10, 200))
 
     def test_potion_counts_formatting(self):
         pc = m.PotionCounts()

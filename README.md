@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit).  It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.2.0` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.3.0` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`.  See
 > [Limitations](#limitations) below.
 
@@ -33,6 +33,11 @@ presses the correct belt keys for you.
 - **Grade-aware potion use.** The watcher reads exactly which potion each belt
   column will drink next and presses the *smallest* grade that covers the HP/MP
   deficit — it won't burn a Full Rejuvenation when a Minor would do.
+- **Calibrate for your build.** Potions are identified by base-item `txtFileNo`
+  codes, which differ between versions/mods (the Infernal Edition renumbers
+  classic D2R by +15).  The **Calibrate** tab teaches the app your build's codes
+  by scanning your belt/inventory while you place known potions, and saves them
+  as a named, switchable combo — no code edits needed.
 - **Full QWER belt support.** All four belt columns work; bind an action to
   multiple columns (`+` button on the *Keys* tab) and the right one is pressed
   per tick.  When the bound columns have no usable potion, the watcher skips
@@ -129,6 +134,38 @@ fields on the *Dashboard* tab to enter your real geared HP / MP / Merc HP; the
 percentages (and therefore potion thresholds) are then computed against those
 values.  The overrides persist in `config/config.json`.
 
+## Calibration (your build's potion codes)
+
+The app identifies potions by their base-item `txtFileNo` code.  These are
+**version/mods-specific** — the Infernal Edition renumbered the classic D2R item
+table by +15 (`587→602`, `593→608`, `515→530`, …), and other mods renumber
+differently.  If your potions show up as `other` on the Dashboard, or you run a
+different version, teach the app the correct codes on the **Calibrate** tab:
+
+1. Go in-game and open your belt/inventory.  Put a potion you *know* — e.g. a
+   **Minor Mana** or **Minor Health** potion, available from the start — in a
+   belt corner.
+2. Click **Scan belt & inventory**.  The tool lists every belt slot (`x`, column,
+   row) and inventory item with its `txtFileNo`.  Find the number of the potion
+   you placed (on Infernal: `x=0` (Q, bottom) → `608` = Light Mana).
+3. In the table, set that row's **Kind** + **Grade** and type the `txtFileNo`.
+4. Repeat for every potion you use.  Anything you don't list is treated as
+   `other` and never pressed.
+5. Name the combo (e.g. `Infernal 3.0.91636`) and click **Save as combo** — it
+   becomes active immediately and is stored in `config/config.json`.
+
+Combos are switchable/deleteable and can be reset to the built-in Infernal
+defaults.  Restore amounts are derived from kind+grade, so custom codes get the
+same behavior as built-ins (minor 30 → full 100%, rejuv 35%/100%).
+
+**Player / merc offsets do NOT need calibration** — they match the Go reference
+build exactly (same `unit-hash-v3` signature and unit struct offsets) and are
+located by signature scan.  The only item-specific value besides potions is your
+hireling's `txtFileNo` (default `338, 271`): if the Dashboard shows *no merc*
+while one is hired, set it on the Calibrate tab (the Diagnostics tab dumps every
+monster `txtFileNo` so you can find it).  If player/merc values ever read wrong,
+run the Diagnostics offset scan — it reports exactly which signature failed.
+
 ## How it works
 
 `GameReader` (`d2r/reader.py`) walks the game's **client-side unit hash table**
@@ -221,7 +258,7 @@ d2r/
   log.py                 persistent auto-rotating event log
   hotkey.py              global toggle hotkey (RegisterHotKey)
 ui/
-  app.py                 CustomTkinter main window
+  app.py                 CustomTkinter main window (incl. Calibrate tab)
   widgets.py             reusable themed widgets
 tests/
   test_core.py           stdlib unittest suite (no live game needed)
