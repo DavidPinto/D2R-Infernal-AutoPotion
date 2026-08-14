@@ -70,6 +70,10 @@ ITEM_OFFSET_PATH = 0x38
 ITEM_OFFSET_STATSLISTEX = 0x88
 ITEM_OFFSET_NEXT = 0x150
 ITEM_OFFSET_IS_CORPSE = 0x1A6
+# Belt/inventory position lives in the item path: X is the belt slot index
+# (column = X % 4, row = X // 4), which is what maps slots to the Q/W/E/R keys.
+ITEM_PATH_OFFSET_X = 0x10
+ITEM_PATH_OFFSET_Y = 0x14
 
 ITEM_UNIT_TYPE = 4
 ITEM_UNIT_DATA_OFFSET_OWNER = 0x0C
@@ -84,19 +88,23 @@ ITEM_LOC_CURSOR = 4
 ITEM_LOC_DROPPING = 5
 ITEM_LOC_SOCKET = 6
 
-# Belt potions bound to Q/W/E are the ones the watcher actually uses.
+# Belt potions are bound to the four belt columns Q/W/E/R.
 POTION_SLOTS = ("heal", "mana", "rejuv")
+BELT_COLUMN_KEYS = ("Q", "W", "E", "R")
 
-# Base-item txtFileNo bands for potions (D2R item-table indices, from the Go
-# reference item-name enum):
-#   587..591  Minor/Light/Healing/Greater/Super Healing Potion
-#   592..596  Minor/Light/Mana/Greater/Super Mana Potion
-#   515, 516   Rejuvenation / Full Rejuvenation Potion
-#   513, 514, 517  Stamina / Antidote / Thawing (not belt-drinkable by default)
-POTION_TXTFILE_HEAL = frozenset(range(587, 592))
-POTION_TXTFILE_MANA = frozenset(range(592, 597))
-POTION_TXTFILE_REJUV = frozenset({515, 516})
-POTION_TXTFILE_OTHER = frozenset({513, 514, 517})
+# Base-item txtFileNo bands for potions.  IMPORTANT: these are the *Infernal
+# Edition* (Warlock expansion) values, which renumbered the classic D2R item
+# table by +15 (587 -> 602, 593 -> 608, 515 -> 530, ...).  The Go reference's
+# classic codes do NOT match this build; the reader only classifies potions it
+# actually sees, so a wrong band simply shows as "unknown" instead of crashing.
+#   602..606  Minor/Light/Greater/Super/Full Healing Potion
+#   607..611  Minor/Light/Greater/Super/Full Mana Potion
+#   530, 531  Rejuvenation / Full Rejuvenation Potion
+#   528, 529, 532  Stamina / Antidote / Thawing (drinkable, but not keyed)
+POTION_TXTFILE_HEAL = frozenset(range(602, 607))
+POTION_TXTFILE_MANA = frozenset(range(607, 612))
+POTION_TXTFILE_REJUV = frozenset({530, 531})
+POTION_TXTFILE_OTHER = frozenset({528, 529, 532})
 
 POTION_KIND_BY_TXTFILE: dict[int, str] = {}
 for _t in POTION_TXTFILE_HEAL:
@@ -108,10 +116,58 @@ for _t in POTION_TXTFILE_REJUV:
 for _t in POTION_TXTFILE_OTHER:
     POTION_KIND_BY_TXTFILE[_t] = "other"
 
+# Weakest -> strongest grade order per family (grade-aware column selection).
+POTION_GRADES: dict[str, list[int]] = {
+    "heal": [602, 603, 604, 605, 606],
+    "mana": [607, 608, 609, 610, 611],
+    "rejuv": [530, 531],
+}
+POTION_GRADE_INDEX: dict[int, int] = {
+    txt: grade for kinds in POTION_GRADES.values()
+    for grade, txt in enumerate(kinds)
+}
+
+# Restore amounts: fixed hit-points/mana for normal grades (classic D2 figures);
+# the "Full" grades restore 100% of the relevant maximum; rejuvenation potions
+# restore a percentage of BOTH life and mana.
+POTION_RESTORE_POINTS = {
+    602: 30, 603: 60, 604: 120, 605: 200,
+    607: 30, 608: 60, 609: 120, 610: 200,
+}
+POTION_RESTORE_PERCENT = {606: 100, 611: 100, 530: 35, 531: 100}
+
 
 def potion_kind(txt_file: int) -> str | None:
     """'heal' | 'mana' | 'rejuv' | 'other' for a potion txtFileNo, else None."""
     return POTION_KIND_BY_TXTFILE.get(txt_file)
+
+
+def potion_grade(txt_file: int) -> int:
+    """Grade index for a potion txt (0 = weakest); -1 when not a known grade."""
+    return POTION_GRADE_INDEX.get(txt_file, -1)
+
+
+def potion_restore(txt_file: int, max_value: int) -> int:
+    """Hit points / mana restored by a potion at a maximum of ``max_value``."""
+    pct = POTION_RESTORE_PERCENT.get(txt_file)
+    if pct is not None:
+        return max(0, int(max_value * pct / 100))
+    return POTION_RESTORE_POINTS.get(txt_file, 0)
+
+
+@dataclass
+class BeltColumn:
+    """One of the four belt columns (Q/W/E/R), as read from the item table.
+
+    ``txt``/``kind``/``grade`` describe the potion that would be drunk NEXT from
+    this column (the lowest X slot in it); ``count`` is every potion stacked in
+    the column.  An empty column has kind None and grade -1."""
+    key: str = "?"
+    index: int = 0
+    txt: int | None = None
+    kind: str | None = None
+    grade: int = -1
+    count: int = 0
 
 # --- Structure offsets inside a unit (D2R 3.x client layout) -----------------
 # These are the engine struct offsets.  They are extremely stable across D2R
@@ -178,7 +234,28 @@ class PotionCounts:
     (offsets unresolved, or item struct not verified on a build)."""
     belt: dict = field(default_factory=lambda: {k: 0 for k in ("heal", "mana", "rejuv", "other")})
     inventory: dict = field(default_factory=lambda: {k: 0 for k in ("heal", "mana", "rejuv", "other")})
+    columns: list = field(default_factory=lambda: [
+        BeltColumn(key=k, index=i) for i, k in enumerate(BELT_COLUMN_KEYS)])
     ok: bool = False
+
+    def choose_belt_column(self, kind: str, deficit: int, max_value: int,
+                           allowed_keys: tuple = BELT_COLUMN_KEYS) -> int | None:
+        """Best belt-column index for ``kind`` to cover a ``deficit`` of ``max_value``.
+
+        Among the bound columns holding a potion of ``kind``, prefers the smallest
+        grade whose restore covers the deficit; when none does, uses the strongest
+        available.  Returns None when no usable column exists."""
+        candidates = [
+            c for c in self.columns
+            if c.kind == kind and c.count > 0 and c.grade >= 0
+            and c.key in allowed_keys and potion_restore(c.txt, max_value) > 0
+        ]
+        if not candidates:
+            return None
+        covering = [c for c in candidates if potion_restore(c.txt, max_value) >= deficit]
+        if covering:
+            return min(covering, key=lambda c: c.grade).index
+        return max(candidates, key=lambda c: c.grade).index
 
     def belt_total(self) -> int:
         return sum(self.belt.values())

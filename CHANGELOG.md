@@ -5,6 +5,47 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-08-14
+
+Grade-aware potion use and full 4th belt column support.
+
+### Added
+
+- **Grade-aware potion selection** (`d2r/models.py`): each belt column now knows
+  the exact potion it will drink next (txtFileNo + kind + grade), read per-slot
+  from the belt item table.  The watcher picks the *smallest* grade that fully
+  covers the HP/MP deficit and only falls back to the strongest available grade
+  when nothing covers it.
+- **4th belt column (R)** fully supported.  Belt columns are derived from the
+  live belt layout instead of being hard-coded to `Q`/`W`/`E`; the QWER column
+  mapping (`X % 4`) and "next-to-drink = lowest X in the column" rule match the
+  game's own belt behavior (including how the game shifts potions down).
+- **Multi-key bindings** (Keys tab): the `+` button adds another belt column to
+  an action (e.g. `heal -> Q + R`); the watcher presses the *right* bound column
+  per tick.  Config stores bindings as lists (`config.keys_for`).
+- **Out-of-stock guard**: when the belt is readable but the bound columns have
+  no usable potion of the needed kind, the watcher skips that action (logs it
+  once) instead of blindly pressing a mismatched column.
+- Corrected potion `txtFileNo` codes for the Infernal Edition build
+  (items shifted +15 vs classic D2R): Healing 602–606, Mana 607–611, Rejuv
+  530/531, Utility (Stamina/Antidote/Thawing) 528/529/532.  Inventory & belt
+  potion counts are now accurate for this build.
+
+### Changed
+
+- Belt location fix: the belt is read from the client's item table (loc `2`,
+  owner = player unit) — the same table as inventory — using the corrected
+  codes, so the earlier "belt can't be found" hunt is obsolete.
+- Diagnostics tab reports per-column belt contents (key, count, kind, grade)
+  for quick verification of the live layout.
+
+### Fixed
+
+- Potion counts mis-reported the belt in this build (codes were wrong, so some
+  kinds never matched); belt and inventory now decode correctly.
+- Grade tests in the unit suite now use trigger-correct snapshots so the new
+  selection rules are exercised deterministically.
+
 ## [1.1.0] - 2026-08-14
 
 QOL / automation / UX expansion.  Zero new third-party dependencies (stdlib +

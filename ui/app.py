@@ -71,6 +71,7 @@ class MainApp(ctk.CTk):
         self.watcher: PotionWatcher | None = None
         self.connected = False
         self._capturing: str | None = None
+        self._capture_append: bool = False
         self._last_connect_attempt = 0.0
         self._last_discover = 0.0
         self._shown_errors: set[str] = set()
@@ -436,16 +437,21 @@ class MainApp(ctk.CTk):
             row = ctk.CTkFrame(parent, fg_color="transparent")
             row.pack(fill="x", padx=12, pady=3)
             ctk.CTkLabel(row, text=label, width=200, anchor="w").pack(side="left")
-            btn = ctk.CTkButton(row, text="", width=120,
+            btn = ctk.CTkButton(row, text="", width=140,
                                command=lambda a=action: self._start_capture(a))
             btn.pack(side="right")
+            add_btn = ctk.CTkButton(row, text="+", width=30,
+                                    command=lambda a=action: self._start_capture(a, append=True))
+            add_btn.pack(side="right", padx=(0, 6))
             self._key_buttons[action] = btn
             self._refresh_key_button(action)
 
-        w.hint(parent, "Click a binding, then press any key in-game would use. "
-                      "Merc actions are sent with the Shift modifier (D2R's "
-                      "feed-merc binding). Match these to your in-game belt layout.").pack(
-                          anchor="w", padx=12, pady=(6, 14))
+        w.hint(parent, "Click a binding to rebind it; use + to add another belt "
+                      "column to the same action (e.g. heal -> Q + R). Merc actions "
+                      "are sent with the Shift modifier (D2R's feed-merc binding). "
+                      "Match these to your in-game belt layout; the 4th column (R) "
+                      "is supported and the watcher picks the best grade in the "
+                      "bound columns.").pack(anchor="w", padx=12, pady=(6, 14))
 
         w.heading(parent, "Behaviour").pack(anchor="w", padx=12, pady=(4, 4))
         self._focus_switch = ctk.CTkSwitch(parent, text="Auto-focus game window before pressing keys",
@@ -497,21 +503,18 @@ class MainApp(ctk.CTk):
 
     # ----------------------------------------------------- key capturing
     def _refresh_key_button(self, action: str) -> None:
-        """Update a binding button's label to its current key."""
+        """Update a binding button's label to its current key(s)."""
         btn = self._key_buttons.get(action)
         if btn:
-            btn.configure(text=vk_name(self._resolve_current(action)))
+            btn.configure(text=" + ".join(self.config.keys_for(action)) or "unbound")
 
-    def _resolve_current(self, action: str) -> int:
-        """VK code currently bound to an action (0 = unbound/invalid)."""
-        from d2r.keys import resolve_key
-        return resolve_key(self.config.key(action)) or 0
-
-    def _start_capture(self, action: str) -> None:
-        """Enter click-to-bind mode: the next key press rebinds 'action'."""
+    def _start_capture(self, action: str, append: bool = False) -> None:
+        """Enter click-to-bind mode: the next key press rebinds 'action' (or adds
+        another belt column to it when ``append``)."""
         if self._capturing:
             return
         self._capturing = action
+        self._capture_append = append
         btn = self._key_buttons[action]
         btn.configure(text="Press a key…")
         self.focus_force()
@@ -524,10 +527,17 @@ class MainApp(ctk.CTk):
             return
         self.unbind("<Key>")
         self._capturing = None
+        append, self._capture_append = self._capture_append, False
         code = int(getattr(event, "keycode", 0))
         if code:
             # Store the friendly key name when known, else the raw VK hex.
-            self.config.keys[action] = vk_name(code)
+            name = vk_name(code)
+            keys = list(self.config.keys_for(action))
+            if not append or not keys:
+                keys = [name]
+            elif name not in keys and len(keys) < len(m.BELT_COLUMN_KEYS):
+                keys.append(name)
+            self.config.keys[action] = keys
             self.config.save()
         self._refresh_key_button(action)
 

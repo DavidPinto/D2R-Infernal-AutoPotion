@@ -175,13 +175,15 @@ class KeySender:
         except Exception:
             pass
 
-    def press(self, action: str) -> bool:
-        """Press the key bound to an action ('heal', 'mana', 'merc_heal', ...).
+    def press(self, action: str, key: str | None = None) -> bool:
+        """Press the key for an action ('heal', 'mana', 'merc_heal', ...).
 
-        Merc actions implicitly add Shift.  Returns False if the binding is
-        unresolved or the injection was rejected by the OS."""
+        ``key`` overrides the action's configured binding (used by the grade-aware
+        watcher to press a specific belt column).  Merc actions implicitly add
+        Shift.  Returns False if the binding is unresolved or the injection was
+        rejected by the OS."""
         with_shift = action.startswith("merc_")
-        key_name = self.config.key(action)
+        key_name = key if key else self.config.key(action)
         vk = self.resolve(key_name)
         if vk is None:
             return False

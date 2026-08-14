@@ -41,6 +41,18 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(c.threshold("nope"), 0)
         self.assertEqual(c.cooldown("nope"), 2.0)
         self.assertEqual(c.key("nope"), "")
+        self.assertEqual(c.keys_for("nope"), [])
+
+    def test_keys_for_supports_multiple_columns(self):
+        c = cfg.AppConfig.load()
+        self.assertEqual(c.keys_for("heal"), ["Q"])          # plain string binding
+        c.keys["heal"] = ["Q", "R"]                          # 4th-column binding
+        self.assertEqual(c.keys_for("heal"), ["Q", "R"])
+        self.assertEqual(c.key("heal"), "Q")                 # primary key unchanged
+        c.keys["rejuv"] = "R"                                # bind rejuv to 4th column
+        self.assertEqual(c.keys_for("rejuv"), ["R"])
+        c.keys["mana"] = []
+        self.assertEqual(c.keys_for("mana"), [])
 
     def test_persist_round_trip(self):
         c = cfg.AppConfig.load()
@@ -86,15 +98,76 @@ class ConfigTests(unittest.TestCase):
 
 class ModelsTests(unittest.TestCase):
     def test_potion_kinds(self):
-        self.assertEqual(m.potion_kind(587), "heal")
-        self.assertEqual(m.potion_kind(591), "heal")
-        self.assertEqual(m.potion_kind(592), "mana")
-        self.assertEqual(m.potion_kind(596), "mana")
-        self.assertEqual(m.potion_kind(515), "rejuv")
-        self.assertEqual(m.potion_kind(516), "rejuv")
-        self.assertEqual(m.potion_kind(514), "other")
+        # Infernal Edition (Warlock) codes: classic D2R + 15.
+        self.assertEqual(m.potion_kind(602), "heal")
+        self.assertEqual(m.potion_kind(606), "heal")
+        self.assertEqual(m.potion_kind(607), "mana")
+        self.assertEqual(m.potion_kind(611), "mana")
+        self.assertEqual(m.potion_kind(530), "rejuv")
+        self.assertEqual(m.potion_kind(531), "rejuv")
+        self.assertEqual(m.potion_kind(528), "other")   # Stamina
+        self.assertEqual(m.potion_kind(529), "other")   # Antidote
+        self.assertEqual(m.potion_kind(532), "other")   # Thawing
         self.assertIsNone(m.potion_kind(1))
-        self.assertIsNone(m.potion_kind(530))
+        self.assertIsNone(m.potion_kind(601))
+        self.assertIsNone(m.potion_kind(515))           # old (classic) codes are gone
+
+    def test_potion_grades_and_restore(self):
+        self.assertEqual(m.potion_grade(602), 0)
+        self.assertEqual(m.potion_grade(606), 4)
+        self.assertEqual(m.potion_grade(607), 0)
+        self.assertEqual(m.potion_grade(611), 4)
+        self.assertEqual(m.potion_grade(530), 0)
+        self.assertEqual(m.potion_grade(531), 1)
+        self.assertEqual(m.potion_grade(1), -1)
+        self.assertEqual(m.potion_restore(602, 200), 30)
+        self.assertEqual(m.potion_restore(605, 200), 200)
+        self.assertEqual(m.potion_restore(606, 200), 200)   # full = 100% of max
+        self.assertEqual(m.potion_restore(608, 200), 60)
+        self.assertEqual(m.potion_restore(530, 200), 70)    # 35% of max
+        self.assertEqual(m.potion_restore(531, 200), 200)
+        self.assertEqual(m.potion_restore(1, 200), 0)
+
+    def _col(self, key, txt, count=1):
+        return m.BeltColumn(key=key, index=m.BELT_COLUMN_KEYS.index(key),
+                            txt=txt, kind=m.potion_kind(txt),
+                            grade=m.potion_grade(txt), count=count)
+
+    def _pc(self, columns):
+        pc = m.PotionCounts()
+        pc.ok = True
+        pc.columns = columns
+        return pc
+
+    def test_choose_belt_column_smallest_covering(self):
+        # Minor (30) vs Super (200); deficit 40 -> Super covers, Minor does not.
+        pc = self._pc([self._col("Q", 602), self._col("R", 605)])
+        self.assertEqual(pc.choose_belt_column("heal", 40, 200), 3)
+        # Deficit 20 -> both cover, pick the smallest grade (Q).
+        self.assertEqual(pc.choose_belt_column("heal", 20, 200), 0)
+
+    def test_choose_belt_column_strongest_when_none_covers(self):
+        pc = self._pc([self._col("Q", 602), self._col("R", 603)])
+        self.assertEqual(pc.choose_belt_column("heal", 100, 200), 3)
+
+    def test_choose_belt_column_respects_binding_and_kind(self):
+        pc = self._pc([self._col("Q", 602), self._col("E", 605)])
+        self.assertEqual(pc.choose_belt_column("heal", 40, 200, allowed_keys=("Q",)), 0)
+        self.assertIsNone(pc.choose_belt_column("mana", 10, 200))
+        self.assertIsNone(pc.choose_belt_column("heal", 10, 200, allowed_keys=("R",)))
+
+    def test_choose_belt_column_uses_next_to_drink_potion(self):
+        # Column R: next-to-drink is the Thawing (other) at slot 3; the Light Mana
+        # behind it (slot 7) is not drinkable yet, so R is not a mana candidate.
+        pc = self._pc([self._col("Q", 608), self._col("R", 532)])
+        self.assertEqual(pc.choose_belt_column("mana", 10, 200), 0)
+        self.assertIsNone(pc.choose_belt_column("mana", 10, 200, allowed_keys=("R",)))
+
+    def test_choose_belt_column_rejuv(self):
+        pc = self._pc([self._col("Q", 530), self._col("R", 531)])
+        # 35% (70/200) does not cover a 100-deficit; Full Rejuv does.
+        self.assertEqual(pc.choose_belt_column("rejuv", 100, 200), 3)
+        self.assertEqual(pc.choose_belt_column("rejuv", 50, 200), 0)
 
     def test_potion_counts_formatting(self):
         pc = m.PotionCounts()
@@ -144,9 +217,11 @@ class FakeSender:
 
     def __init__(self, *args, **kwargs):
         self.pressed: list[str] = []
+        self.pressed_keys: list[tuple] = []
 
-    def press(self, action: str) -> bool:
+    def press(self, action: str, key: str | None = None) -> bool:
         self.pressed.append(action)
+        self.pressed_keys.append((action, key))
         return True
 
 
@@ -160,6 +235,7 @@ class FakeReader:
 class WatcherTests(unittest.TestCase):
     def _watcher(self, enabled=True):
         c = cfg.AppConfig.load()
+        c.reset_to_defaults()   # deterministic regardless of any real config.json
         c.enabled = enabled
         from d2r.watcher import PotionWatcher
         w = PotionWatcher(FakeReader(), c)
@@ -243,6 +319,87 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(st["errors"], 0)
         self.assertIsNotNone(st["last_action"])
         self.assertEqual(w.counts()["heal"], 1)
+
+    # ------------------------------------------------------- grade-aware
+    def _col(self, key, txt, count=1):
+        return m.BeltColumn(key=key, index=m.BELT_COLUMN_KEYS.index(key),
+                            txt=txt, kind=m.potion_kind(txt),
+                            grade=m.potion_grade(txt), count=count)
+
+    def _belt_snap(self, hp=90, mana=90, max_hp=200, max_mana=200, columns=None, merc=0):
+        s = m.PlayerSnapshot()
+        s.in_game = True
+        s.hp, s.mana = hp, mana
+        s.max_hp, s.max_mana = max_hp, max_mana
+        s.hp_percent = int(hp / max_hp * 100) if max_hp else 0
+        s.mana_percent = int(mana / max_mana * 100) if max_mana else 0
+        if merc:
+            s.merc_max_hp = max_hp
+            s.merc_hp = merc
+            s.merc_hp_percent = int(merc / max_hp * 100)
+        s.potion_counts = m.PotionCounts()
+        s.potion_counts.ok = True
+        s.potion_counts.columns = list(columns or [])
+        return s
+
+    def test_grade_picks_best_column(self):
+        w = self._watcher()
+        w.config.keys["heal"] = ["Q", "R"]   # 4th column now bound to heal
+        # Q = Minor (30), R = Super (200); deficit 40 -> R covers.
+        snap = self._belt_snap(hp=160, columns=[self._col("Q", 602), self._col("R", 605)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed, ["heal"])
+        self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
+
+    def test_grade_prefers_smallest_covering(self):
+        w = self._watcher()
+        w.config.keys["heal"] = ["Q", "R"]
+        # max 150, hp 120 -> 80% (triggers); deficit 30, both grades cover -> Q.
+        snap = self._belt_snap(hp=120, mana=150, max_hp=150, max_mana=150,
+                               columns=[self._col("Q", 602), self._col("R", 603)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "Q")])
+
+    def test_grade_uses_strongest_when_none_covers(self):
+        w = self._watcher()
+        w.config.keys["heal"] = ["Q", "R"]
+        snap = self._belt_snap(hp=100, mana=190, columns=[self._col("Q", 602), self._col("R", 603)])
+        w._tick(snap)   # deficit 100, neither covers -> Light (R)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
+
+    def test_grade_skips_when_belt_lacks_kind(self):
+        w = self._watcher()
+        w.config.keys["heal"] = "Q"
+        # Q holds Thawing ("other"); pressing it would waste a wrong potion.
+        snap = self._belt_snap(hp=70, columns=[self._col("Q", 532)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed, [])
+        # Reported once (no per-tick spam).
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed, [])
+
+    def test_grade_4th_column_rejuv(self):
+        w = self._watcher()
+        w.config.keys["rejuv"] = "R"   # rejuv bound to the 4th column
+        snap = self._belt_snap(hp=20, columns=[self._col("R", 531)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("rejuv", "R")])
+
+    def test_grade_merc_uses_bound_column_with_shift(self):
+        w = self._watcher()
+        w.config.keys["merc_heal"] = ["Q", "R"]
+        # Player healthy so only the merc's heal fires; R covers the merc deficit.
+        snap = self._belt_snap(hp=190, mana=190, merc=80,
+                               columns=[self._col("Q", 602), self._col("R", 605)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("merc_heal", "R")])
+
+    def test_grade_falls_back_to_binding_when_belt_unreadable(self):
+        w = self._watcher()
+        w.config.keys["heal"] = "Q"
+        s = self._snap(hp=70, mana=90)   # potion_counts.ok stays False
+        w._tick(s)
+        self.assertEqual(w.sender.pressed_keys, [("heal", None)])
 
 
 class HotkeyTests(unittest.TestCase):

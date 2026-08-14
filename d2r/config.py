@@ -128,9 +128,19 @@ class AppConfig:
         # Unknown names default to a conservative 2.0 s (no key spam).
         return float(self.cooldowns.get(name, DEFAULTS["cooldowns"].get(name, 2.0)))
 
+    def keys_for(self, name: str) -> list[str]:
+        """All keys bound to an action, in order (a binding may be a plain string
+        for one key or a list for several belt columns, e.g. heal -> [Q, R])."""
+        raw = self.keys.get(name, DEFAULTS["keys"].get(name, ""))
+        if isinstance(raw, (list, tuple)):
+            return [str(k).strip() for k in raw if str(k).strip()]
+        s = str(raw).strip()
+        return [s] if s else []
+
     def key(self, name: str) -> str:
-        # Unknown names default to "" (unbound -> press becomes a no-op).
-        return str(self.keys.get(name, DEFAULTS["keys"].get(name, "")))
+        # Primary (first) key for an action; "" when unbound (press -> no-op).
+        keys = self.keys_for(name)
+        return keys[0] if keys else ""
 
     @property
     def enabled(self) -> bool:

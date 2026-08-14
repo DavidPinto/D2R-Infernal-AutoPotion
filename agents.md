@@ -45,14 +45,24 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Goals / tasks
 
-- **v1.2.0 in progress** (next release).
-  1. UI: user-customizable global hotkey (capture-style binding, not preset list).
-  2. UI: presets moved to the top of the Triggers tab.
-  3. UI: profile save/load always accessible (persistent strip, any tab).
-  4. Merc: running observed max so merc HP% accounts for gear (mirrors player logic).
-  5. Merc: show name / type / level like the player block.
-  6. Mechanics: use the 4th belt column/hotkey (new binding + action).
-  7. Mechanics: grade-aware potion choice (belt holds per-column grades; pick the
-     smallest that covers the deficit).
+- **v1.2.0 Iteration 3 (grade-aware + 4th belt column) — landing now**:
+  belt columns read per-slot from the item table (`loc==2`, owner=player; column
+  = `X % 4`, next-to-drink = lowest `X`); potion txtFileNo codes corrected for
+  this Infernal build (+15 shift: heal 602–606, mana 607–611, rejuv 530/531,
+  utility 528/529/532); grade-aware `choose_belt_column` (smallest covering
+  grade, else strongest) + out-of-stock skip; multi-key bindings (Keys tab `+`).
+  Remaining: run suite + compileall, commit Iteration 3, bump is already 1.2.0,
+  CHANGELOG/README updated, final release commit.
 - **Done**: v1.0.0 baseline, v1.1.0 potion monitoring / profiles / presets / event log /
   session stats / global hotkey (landed 2026-08-14).
+- **v1.2.0 iterations already landed**: Iteration 1 (user-customizable global
+  hotkey, presets moved to top of Triggers, persistent profile strip),
+  Iteration 2 (UI + mechanics for the 4th column and grade-aware selection).
+
+## Build state
+
+- Version `1.2.0`. Test suite: 40 tests green. Belt + inventory + player + merc
+  live-verified against pid 20048 (Sylus, Warlock 20) — belt decodes
+  Q={Thawing, Light Mana}, R={Stamina, Antidote}, W/E empty; inventory =
+  Light/Mana Mana ×2 + Rejuv ×3. Grade-aware next-to-drink correct (Q's next is
+  Thawing → never pressed for mana).

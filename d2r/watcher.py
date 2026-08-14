@@ -9,6 +9,11 @@ decides which belt key to press:
     if merc alive:
         if merc HP% <= merc_rejuv_at : Shift + rejuv   (preferred)
         elif merc HP% <= merc_heal_at: Shift + heal
+
+When the belt content is readable, the key is chosen grade-aware: among the belt
+columns bound to the action, the potion with the smallest grade whose restore
+covers the deficit is used (strongest available when nothing covers it).  An
+empty/mismatched column is never pressed (no wrong potion waste).
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ class PotionWatcher:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_used: dict[str, float] = {}
+        self._out_of_stock: set[str] = set()   # actions currently reported empty
         self._lock = threading.Lock()
         self._last_snapshot = m.PlayerSnapshot()
         self._potion_uses = 0
@@ -189,34 +195,76 @@ class PotionWatcher:
         Rejuvenation wins when HP or MP is critical; otherwise heal/mana are
         checked independently (a frame can legitimately drink both).  The merc
         is handled separately with its own thresholds, heal preferred over
-        rejuv when the merc is merely hurt."""
+        rejuv when the merc is merely hurt.  Each use is grade-aware: the best
+        bound belt column for the deficit is chosen when the belt is readable."""
         cfg = self.config
         t = time.monotonic()
+
+        hp_def = max(0, snap.max_hp - snap.hp)
+        mp_def = max(0, snap.max_mana - snap.mana)
 
         use_rejuv = (snap.hp_percent <= cfg.threshold("rejuv_potion_at_life")
                      or snap.mana_percent < cfg.threshold("rejuv_potion_at_mana"))
         if use_rejuv and self._ready("rejuv", t):
-            self._use("rejuv", f"HP {snap.hp_percent}% / MP {snap.mana_percent}%", snap)
+            self._act("rejuv", "rejuv", max(hp_def, mp_def), max(snap.max_hp, snap.max_mana),
+                      f"HP {snap.hp_percent}% / MP {snap.mana_percent}%", snap, t)
         else:
             if snap.hp_percent <= cfg.threshold("healing_potion_at") and self._ready("heal", t):
-                self._use("heal", f"HP {snap.hp_percent}%", snap)
+                self._act("heal", "heal", hp_def, snap.max_hp, f"HP {snap.hp_percent}%", snap, t)
             if snap.mana_percent <= cfg.threshold("mana_potion_at") and self._ready("mana", t):
-                self._use("mana", f"MP {snap.mana_percent}%", snap)
+                self._act("mana", "mana", mp_def, snap.max_mana, f"MP {snap.mana_percent}%", snap, t)
 
         # Mercenary (only when one is present).
         if snap.merc_alive:
+            m_def = max(0, snap.merc_max_hp - snap.merc_hp)
             if snap.merc_hp_percent <= cfg.threshold("merc_rejuv_potion_at") and self._ready("merc_rejuv", t):
-                self._use("merc_rejuv", f"Merc HP {snap.merc_hp_percent}%", snap)
+                self._act("merc_rejuv", "rejuv", m_def, snap.merc_max_hp,
+                          f"Merc HP {snap.merc_hp_percent}%", snap, t)
             elif snap.merc_hp_percent <= cfg.threshold("merc_healing_potion_at") and self._ready("merc_heal", t):
-                self._use("merc_heal", f"Merc HP {snap.merc_hp_percent}%", snap)
+                self._act("merc_heal", "heal", m_def, snap.merc_max_hp,
+                          f"Merc HP {snap.merc_hp_percent}%", snap, t)
+
+    def _pick(self, kind: str, deficit: int, max_value: int,
+              action: str, snap: m.PlayerSnapshot) -> tuple[int | None, bool]:
+        """Choose the belt column to drink from.
+
+        Returns (column_index, skip).  skip=True when the belt is known to have
+        no usable potion of ``kind`` in the bound columns (the key is NOT pressed
+        rather than waste a mismatched potion).  column_index is None when the
+        belt content is unreadable, meaning the caller falls back to the plain
+        configured key."""
+        pc = snap.potion_counts
+        if not pc.ok:
+            return None, False
+        allowed = tuple(k for k in m.BELT_COLUMN_KEYS if k in self.config.keys_for(action))
+        idx = pc.choose_belt_column(kind, deficit, max_value, allowed_keys=allowed)
+        if idx is None:
+            return None, True
+        return idx, False
+
+    def _act(self, action: str, kind: str, deficit: int, max_value: int,
+             reason: str, snap: m.PlayerSnapshot, t: float) -> None:
+        """Grade-aware drink for one action: pick a column (or skip if the belt
+        has no potion of the needed kind), then press that column's key."""
+        col, skip = self._pick(kind, deficit, max_value, action, snap)
+        if skip:
+            if action not in self._out_of_stock:
+                self._out_of_stock.add(action)
+                self._emit("info", f"No {kind} potion left on the belt.", snap)
+            return
+        self._out_of_stock.discard(action)
+        self._use(action, reason, snap, column=col)
 
     def _ready(self, action: str, now: float) -> bool:
         """True once this action's cooldown has elapsed since its last press."""
         return now - self._last_used.get(action, 0.0) >= self.config.cooldown(action)
 
-    def _use(self, action: str, reason: str, snap: m.PlayerSnapshot) -> None:
-        """Press the key for 'action' and log the outcome (success or UIPI-block)."""
-        ok = self.sender.press(action)
+    def _use(self, action: str, reason: str, snap: m.PlayerSnapshot,
+             column: int | None = None) -> None:
+        """Press the key for 'action' (a specific belt column when given) and log
+        the outcome (success or UIPI-block)."""
+        key = m.BELT_COLUMN_KEYS[column] if column is not None else None
+        ok = self.sender.press(action, key=key)
         now = time.monotonic()
         self._last_used[action] = now
         if ok:

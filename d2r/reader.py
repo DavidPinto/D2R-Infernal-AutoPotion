@@ -266,12 +266,17 @@ class GameReader:
         buckets = self.proc.read_bytes(table, m.UNIT_TABLE_ENTRIES * 8)
         if len(buckets) < m.UNIT_TABLE_ENTRIES * 8:
             return counts
+
+        # Column -> [(slot X, txt)] for the local player's belt potions.  The
+        # vendor grid shares loc 2 in this build, so we only keep items owned by
+        # the player (owner == main unit id).
+        belt_cols: dict[int, list] = {c: [] for c in range(len(m.BELT_COLUMN_KEYS))}
         seen = 0
         for i in range(m.UNIT_TABLE_ENTRIES):
             unit = int.from_bytes(buckets[i * 8:i * 8 + 8], "little")
             while unit and seen < 512:
                 seen += 1
-                # One batched read per item: header (type..unit-data) + next ptr.
+                # One batched read per item: header (type..next ptr).
                 buf = self.proc.read_bytes(unit, 0x160)
                 if len(buf) < 0x158:
                     break
@@ -279,17 +284,32 @@ class GameReader:
                     kind = m.potion_kind(int.from_bytes(buf[0x04:0x08], "little"))
                     if kind:
                         loc = int.from_bytes(buf[0x0C:0x10], "little")
-                        if loc == m.ITEM_LOC_BELT:
+                        ud = int.from_bytes(buf[0x10:0x18], "little")
+                        owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
+                        if loc == m.ITEM_LOC_BELT and (not main_id or owner == main_id):
                             counts.belt[kind] += 1
+                            path = int.from_bytes(buf[0x38:0x40], "little")
+                            slot_x = self.proc.read_u16(path + m.ITEM_PATH_OFFSET_X) if path else -1
+                            col = slot_x % len(m.BELT_COLUMN_KEYS) if slot_x >= 0 else 0
+                            belt_cols.setdefault(col, []).append((slot_x, int.from_bytes(buf[0x04:0x08], "little")))
                         elif loc == m.ITEM_LOC_INVENTORY and main_id:
-                            ud = int.from_bytes(buf[0x10:0x18], "little")
                             if ud:
-                                owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER)
                                 page = self.proc.read_u8(ud + m.ITEM_UNIT_DATA_OFFSET_INVPAGE)
                                 flags = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_FLAGS)
                                 if (owner == main_id and page == 0 and not (flags & 0x2000)):
                                     counts.inventory[kind] += 1
                 unit = int.from_bytes(buf[0x150:0x158], "little")
+
+        for col_idx, entries in belt_cols.items():
+            if not entries or not (0 <= col_idx < len(counts.columns)):
+                continue
+            column = counts.columns[col_idx]
+            column.count = len(entries)
+            next_txt = min(entries, key=lambda e: e[0])[1]   # lowest slot = next drunk
+            column.txt = next_txt
+            column.kind = m.potion_kind(next_txt)
+            column.grade = m.potion_grade(next_txt)
+
         counts.ok = seen > 0
         return counts
 
@@ -595,6 +615,9 @@ class GameReader:
             lines.append("  item table unreadable (offsets unresolved or not in a game)")
         else:
             lines.append(f"  belt      : {counts.fmt_belt()}")
+            for col in counts.columns:
+                if col.count:
+                    lines.append(f"    {col.key}: {col.count}x txt={col.txt} ({col.kind}, grade {col.grade})")
             lines.append(f"  inventory : {counts.fmt_inventory()}")
             lines.append("  item units (txtFileNo, kind, loc, owner):")
             table = self._base() + self.offsets.UnitTable + m.UNIT_TABLE_ITEM_OFFSET

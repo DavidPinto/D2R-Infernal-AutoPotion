@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit).  It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.1.0` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.2.0` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`.  See
 > [Limitations](#limitations) below.
 
@@ -30,6 +30,13 @@ presses the correct belt keys for you.
 - **Potion monitoring.** The Dashboard shows live belt + inventory potion counts
   (Healing / Mana / Rejuvenation / Other) read from the client's item table, so
   you can see what's left without tabbing in.
+- **Grade-aware potion use.** The watcher reads exactly which potion each belt
+  column will drink next and presses the *smallest* grade that covers the HP/MP
+  deficit — it won't burn a Full Rejuvenation when a Minor would do.
+- **Full QWER belt support.** All four belt columns work; bind an action to
+  multiple columns (`+` button on the *Keys* tab) and the right one is pressed
+  per tick.  When the bound columns have no usable potion, the watcher skips
+  instead of pressing a mismatched column.
 - **Profiles & presets.** Save/load named profiles, or apply one-click presets
   (Leveling / Boss farming / Conservative / Mana-heavy) from the *Triggers*
   tab.
@@ -95,7 +102,9 @@ settings in `config/config.json` *next to the exe*.
 These match the game's **remastered-controls belt layout (QWER)**.  The tool
 must send exactly the keys your belt is bound to in D2R — rebind on the *Keys*
 tab if you use a different profile.  Merc actions add Shift (D2R's feed-merc
-binding).  Rebind any key by clicking its button and pressing the new key.
+binding).  Rebind any key by clicking its button and pressing the new key; use
+the **`+`** button to bind an action to a *second* belt column (e.g. `Q` + `R`
+for health) — the watcher then picks the grade-appropriate column automatically.
 
 ## Triggers (defaults)
 
@@ -140,7 +149,7 @@ values.  The overrides persist in `config/config.json`.
   read from the player unit's txtFileNo field (`+0x04`).
 
 The decision loop (`d2r/watcher.py`) is a faithful port of the Go
-`lifewatcher`:
+`lifewatcher`, with grade-aware column selection:
 
 ```
 HP% <= rejuv_at_life  OR  MP% < rejuv_at_mana  → rejuv
@@ -150,6 +159,13 @@ if merc alive:
     merc HP% <= merc_rejuv_at                   → Shift + rejuv
     elif merc HP% <= merc_heal_at               → Shift + heal
 ```
+
+For each potion the watcher computes the HP/MP deficit, then across the *bound*
+belt columns picks the smallest potion grade that covers it (strongest if none
+cover); it skips the action entirely when the bound columns hold no usable
+potion.  Belt columns are read per-slot from the item table — column = `X % 4`
+(`Q`/`W`/`E`/`R`) and next-to-drink is the lowest `X` in that column, matching
+how the game shifts potions down the belt.
 
 Key presses are injected with `SendInput` from a background watcher thread;
 before each press the tool focuses the game window (via `AttachThreadInput` +
