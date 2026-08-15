@@ -332,22 +332,28 @@ class GameReader:
                     loc = int.from_bytes(buf[0x0C:0x10], "little")
                     ud = int.from_bytes(buf[0x10:0x18], "little")
                     owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
-                    if kind:
-                        if loc == m.ITEM_LOC_BELT and (not main_id or owner == main_id):
+                    if loc == m.ITEM_LOC_BELT and (not main_id or owner == main_id):
+                        # The whole belt slot is recorded even when the potion is
+                        # not yet classified (unknown game version/mods): the
+                        # slot then counts as filled (correct empty-slot geometry)
+                        # and the watcher can fall back to a best-effort keypress
+                        # on a critical stat instead of sitting idle at 0%.
+                        if kind:
                             counts.belt[kind] += 1
-                            path = int.from_bytes(buf[0x38:0x40], "little")
-                            slot_x = self.proc.read_u16(path + m.ITEM_PATH_OFFSET_X) if path else -1
-                            col = slot_x % len(m.BELT_COLUMN_KEYS) if slot_x >= 0 else 0
-                            belt_cols.setdefault(col, []).append((slot_x, txt))
-                            if slot_x >= 0:
-                                belt_filled.append(slot_x)
+                        path = int.from_bytes(buf[0x38:0x40], "little")
+                        slot_x = self.proc.read_u16(path + m.ITEM_PATH_OFFSET_X) if path else -1
+                        col = slot_x % len(m.BELT_COLUMN_KEYS) if slot_x >= 0 else 0
+                        belt_cols.setdefault(col, []).append((slot_x, txt))
+                        if slot_x >= 0:
+                            belt_filled.append(slot_x)
+                            if kind:
                                 counts.belt_slots[slot_x] = kind
-                        elif loc == m.ITEM_LOC_INVENTORY and main_id:
-                            if ud:
-                                page = self.proc.read_u8(ud + m.ITEM_UNIT_DATA_OFFSET_INVPAGE)
-                                flags = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_FLAGS)
-                                if (owner == main_id and page == 0 and not (flags & 0x2000)):
-                                    counts.inventory[kind] += 1
+                    elif loc == m.ITEM_LOC_INVENTORY and main_id and kind:
+                        if ud:
+                            page = self.proc.read_u8(ud + m.ITEM_UNIT_DATA_OFFSET_INVPAGE)
+                            flags = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_FLAGS)
+                            if (owner == main_id and page == 0 and not (flags & 0x2000)):
+                                counts.inventory[kind] += 1
                     elif loc == m.ITEM_LOC_EQUIPPED and owner == main_id:
                         # The equipped belt (any class of belt) tells us the grid.
                         if m.belt_rows_for(txt):

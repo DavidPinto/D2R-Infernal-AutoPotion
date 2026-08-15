@@ -26,7 +26,7 @@ from . import models as m
 from . import refill as refill_mod
 from . import input as input_mod
 from .config import AppConfig
-from .keys import KeySender
+from .keys import FALLBACK_KEYS, KeySender
 from .process import find_window_for_pid
 from .reader import GameReader
 
@@ -222,48 +222,26 @@ class PotionWatcher:
     def _tick(self, snap: m.PlayerSnapshot) -> None:
         """Decide which potion (if any) to drink this tick.
 
-        Smart tier (default): ``plan_consume`` picks the best potion across the
-        whole managed belt, preferring a specific potion over a rejuv when only
-        one stat is low.  Plain tier: rejuv wins when HP or MP is critical,
-        otherwise heal/mana are checked independently.  The merc is always
-        handled separately with its own thresholds, heal preferred over rejuv
-        when the merc is merely hurt.  Each use is grade-aware: the best managed
-        belt column for the deficit is chosen when the belt is readable."""
-        if self.config.smart_enabled():
-            self._smart_tick(snap)
-        else:
-            self._plain_tick(snap)
+        One decision path (no tiers): ``plan_consume`` picks the best potion
+        across the whole managed belt — a covering potion of the wanted kind,
+        else a rejuv (covers both), else any potion of that kind even
+        under-strength (never wasted).  When only one stat is low the specific
+        potion is preferred over rejuv; when both are critical a rejuv wins,
+        else the heal and mana that are present are both drunk.  The merc is
+        handled separately with its own thresholds.  Each use is grade-aware:
+        the best managed belt column for the deficit is chosen when the belt is
+        readable."""
+        self._smart_tick(snap)
         self._merc_tick(snap)
 
-    def _plain_tick(self, snap: m.PlayerSnapshot) -> None:
-        """Plain-tier player decisions (rejuv-wins-if-critical, then heal/mana)."""
-        cfg = self.config
-        t = time.monotonic()
-
-        hp_def = max(0, snap.max_hp - snap.hp)
-        mp_def = max(0, snap.max_mana - snap.mana)
-
-        use_rejuv = (snap.hp_percent <= cfg.threshold("rejuv_potion_at_life")
-                     or snap.mana_percent < cfg.threshold("rejuv_potion_at_mana"))
-        if use_rejuv:
-            # Rejuv restores both HP and MP, so when it is warranted we drink it
-            # and skip heal/mana.  When no rejuv potion is available we must still
-            # cover the low stat, so fall through to the specific potions.
-            drank = self._act("rejuv", "rejuv", max(hp_def, mp_def), max(snap.max_hp, snap.max_mana),
-                              f"HP {snap.hp_percent}% / MP {snap.mana_percent}%", snap, t)
-            if drank:
-                return
-        if snap.hp_percent <= cfg.threshold("healing_potion_at"):
-            self._act("heal", "heal", hp_def, snap.max_hp, f"HP {snap.hp_percent}%", snap, t)
-        if snap.mana_percent <= cfg.threshold("mana_potion_at"):
-            self._act("mana", "mana", mp_def, snap.max_mana, f"MP {snap.mana_percent}%", snap, t)
-
     def _smart_tick(self, snap: m.PlayerSnapshot) -> None:
-        """Smart-tier player decisions via :func:`refill.plan_consume`."""
+        """Unified player decisions via :func:`refill.plan_consume` (no tiers)."""
         cfg = self.config
         t = time.monotonic()
         hp_def = max(0, snap.max_hp - snap.hp)
         mp_def = max(0, snap.max_mana - snap.mana)
+        hp_critical = snap.hp_percent <= cfg.threshold("rejuv_potion_at_life")
+        mp_critical = snap.mana_percent < cfg.threshold("rejuv_potion_at_mana")
         acts, missing = refill_mod.plan_consume(
             hp_percent=snap.hp_percent, mana_percent=snap.mana_percent,
             hp_def=hp_def, mp_def=mp_def,
@@ -274,14 +252,29 @@ class PotionWatcher:
             rejuv_life=cfg.threshold("rejuv_potion_at_life"),
             rejuv_mana=cfg.threshold("rejuv_potion_at_mana"),
         )
-        for kind in missing:
-            action = kind
-            if action not in self._out_of_stock:
-                self._out_of_stock.add(action)
-                self._emit("info", f"No {kind} potion left on the belt.", snap)
         for act in acts:
-            self._act(act["action"], act["kind"], act["deficit"], act["max_value"],
-                      act["reason"], snap, t)
+            kind = act["kind"]
+            critical = (kind == "rejuv"
+                        or (kind == "heal" and hp_critical)
+                        or (kind == "mana" and mp_critical))
+            self._act(act["action"], kind, act["deficit"], act["max_value"],
+                      act["reason"], snap, t, critical=critical)
+        # A kind reported missing is still worth a best-effort press: when the
+        # belt holds potions the app cannot classify (uncalibrated codes), the
+        # wanted potion may be sitting there unrecognised, so a critical stat
+        # must not just sit at 0%.
+        for kind in missing:
+            if kind == "rejuv":
+                self._act("rejuv", "rejuv", max(hp_def, mp_def),
+                          max(snap.max_hp, snap.max_mana),
+                          f"HP {snap.hp_percent}% / MP {snap.mana_percent}%",
+                          snap, t, critical=True)
+            elif kind == "heal":
+                self._act("heal", "heal", hp_def, snap.max_hp,
+                          f"HP {snap.hp_percent}%", snap, t, critical=True)
+            elif kind == "mana":
+                self._act("mana", "mana", mp_def, snap.max_mana,
+                          f"MP {snap.mana_percent}%", snap, t, critical=True)
 
     def _merc_tick(self, snap: m.PlayerSnapshot) -> None:
         """Mercenary decisions (only when one is present and alive)."""
@@ -316,13 +309,32 @@ class PotionWatcher:
         return next((c for c in pc.columns if c.index == idx), False)
 
     def _act(self, action: str, kind: str, deficit: int, max_value: int,
-             reason: str, snap: m.PlayerSnapshot, t: float) -> bool:
+             reason: str, snap: m.PlayerSnapshot, t: float,
+             critical: bool = False) -> bool:
         """Grade-aware drink for one action: pick a column (or skip if the belt
         has no potion of the needed kind), apply the grade-aware gate, then press
         that column's key.  Returns True when a drink was actually attempted
-        (a usable column existed and the cooldown allowed it)."""
+        (a usable column existed and the cooldown allowed it).
+
+        On a *critical* stat with no potion of the wanted kind on the managed
+        belt, an unclassified column is still drunk as a best-effort (the potion
+        may simply be uncalibrated for this build) instead of sitting at 0%."""
         col = self._pick(kind, deficit, max_value, snap)
         if col is False:
+            if critical:
+                col = self._unclassified_column(action, snap.potion_counts)
+                if col is not None:
+                    if not self._ready(action, t):
+                        return False
+                    self._out_of_stock.discard(action)
+                    self._warn_once(
+                        f"{action}-unclassified",
+                        f"No recognised {kind} potion is on the managed belt, but "
+                        f"unidentified potions are present - pressing column "
+                        f"{col.key} as a best effort.  Teach the app your potion "
+                        f"codes in the Calibrate tab for exact drinking.", snap)
+                    self._use(action, reason, snap, column=col)
+                    return True
             if action not in self._out_of_stock:
                 self._out_of_stock.add(action)
                 self._emit("info", f"No {kind} potion left on the belt.", snap)
@@ -333,6 +345,28 @@ class PotionWatcher:
         self._out_of_stock.discard(action)
         self._use(action, reason, snap, column=col)
         return True
+
+    def _unclassified_column(self, action: str, pc) -> m.BeltColumn | None:
+        """Managed column holding a potion the app cannot classify.
+
+        Used only as a critical best-effort: the column's potion is on the belt
+        but its txtFileNo is not in the active codes (game version/mods not
+        calibrated), so the wanted kind may be sitting there unrecognised.  The
+        action's standard column (heal Q / mana W / rejuv E) is tried first,
+        then any unclassified managed column."""
+        if not getattr(pc, "ok", False):
+            return None
+        managed = set(self.config.managed_indices())
+        letter = FALLBACK_KEYS.get(action, "")
+        if letter and letter in m.BELT_COLUMN_KEYS:
+            idx = m.BELT_COLUMN_KEYS.index(letter)
+            col = next((c for c in pc.columns
+                        if c.index == idx and c.count > 0 and c.kind is None), None)
+            if col is not None:
+                return col
+        return next((c for c in pc.columns
+                     if c.index in managed and c.count > 0 and c.kind is None),
+                    None)
 
     def _ready(self, action: str, now: float, candidate_grade: int = -1) -> bool:
         """True once this action's cooldown has elapsed since its last press.

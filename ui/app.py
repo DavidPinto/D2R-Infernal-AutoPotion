@@ -495,31 +495,25 @@ class MainApp(ctk.CTk):
         body = scroll
 
         w.heading(body, "Belt columns & hotkeys").pack(anchor="w", padx=12, pady=(10, 4))
-        w.hint(body, "The app drinks by pressing your belt's hotkeys and reads each "
-                     "slot to see which potion it holds.  Tick a column to let the "
-                     "app drink from it; untick to keep the app entirely off it.  "
-                     "The button shows the in-game key bound to that column - click "
-                     "it and press a key to rebind (D2R lets you remap Q/W/E/R); "
-                     "Esc restores the default.  Match these to the game so a "
-                     "wrong-column potion is never drunk by mistake.").pack(
-                         anchor="w", padx=12, pady=(0, 6))
+        w.hint(body, "Tick a column to let the app drink from it; the input shows "
+                     "the in-game key bound to that column.  Type a single key "
+                     "(letter/number) and press Enter — Esc/Delete/blank restores "
+                     "the default.  Match these to the game so the correct potion "
+                     "is always drunk.").pack(anchor="w", padx=12, pady=(0, 6))
         man = ctk.CTkFrame(body, fg_color="transparent")
         man.pack(anchor="w", padx=12, pady=(0, 2), fill="x")
         self._managed_boxes: dict[str, ctk.CTkCheckBox] = {}
-        self._belt_key_btns: dict[str, ctk.CTkButton] = {}
+        self._belt_key_entries: dict[str, ctk.CTkEntry] = {}
         for col in m.BELT_COLUMN_KEYS:
-            row = ctk.CTkFrame(man, fg_color="transparent")
-            row.pack(anchor="w", pady=(0, 2))
-            box = ctk.CTkCheckBox(row, text=col, command=self._on_managed_toggle)
-            box.pack(side="left", padx=(0, 8))
+            box = ctk.CTkCheckBox(man, text=col, command=self._on_managed_toggle)
+            box.pack(side="left", padx=(0, 4))
             self._managed_boxes[col] = box
-            keys = self.config.belt_keys_map()
-            btn = ctk.CTkButton(row, text=f"{col}  ->  {keys[m.BELT_COLUMN_KEYS.index(col)]}",
-                                width=110, height=26, fg_color="#333",
-                                hover_color="#4a4a4a", font=ctk.CTkFont(size=11),
-                                command=lambda c=col: self._on_belt_key_capture(c))
-            btn.pack(side="left")
-            self._belt_key_btns[col] = btn
+            entry = ctk.CTkEntry(man, width=32, height=26, font=ctk.CTkFont(size=11),
+                                 justify="center")
+            entry.pack(side="left", padx=(0, 10))
+            entry.bind("<Return>", lambda e, c=col: self._on_belt_key_entry(c))
+            entry.bind("<FocusOut>", lambda e, c=col: self._on_belt_key_entry(c))
+            self._belt_key_entries[col] = entry
         self._refresh_managed()
         self._refresh_belt_keys()
         self._belt_keys_hint = ctk.CTkLabel(body, text="", font=ctk.CTkFont(size=11),
@@ -608,6 +602,28 @@ class MainApp(ctk.CTk):
             [k for k, box in self._managed_boxes.items() if box.get()])
         self.config.save()
         self._refresh_managed()   # normalise to "all columns" when none selected
+
+    def _on_belt_key_entry(self, col: str):
+        """Validate and save a belt-column key typed into the entry."""
+        entry = self._belt_key_entries.get(col)
+        if not entry:
+            return
+        text = entry.get().strip().upper()
+        if text in ("ESC", "DELETE", ""):
+            # Restore default
+            self.config.set_belt_key(col, "")
+        else:
+            from .hotkey import keysym_to_key_name
+            name = keysym_to_key_name(text)
+            if not name:
+                self._belt_keys_hint.configure(
+                    text=f"Unsupported key for column {col} — try a letter, number, F-key or arrow.",
+                    text_color=DANGER)
+                return
+            self.config.set_belt_key(col, name)
+        self.config.save()
+        self._refresh_belt_keys()
+        self._belt_keys_hint.configure(text="")
 
     def _on_refill_toggle(self):
         self.config.set_refill_enabled(bool(self._refill_switch.get()))
@@ -834,52 +850,19 @@ class MainApp(ctk.CTk):
         self.bind("<KeyPress>", self._on_hotkey_capture_key)
         self.bind("<KeyRelease>", self._on_hotkey_capture_release)
 
-    def _on_belt_key_capture(self, col: str):
-        """Grab a new in-game key for one belt column (Esc or Delete resets it)."""
-        if self._capturing:
-            if self._capturing == "belt_key" and self._capture_col == col:
-                self._end_capture()
-            return
-        self._capturing = "belt_key"
-        self._capture_col = col
-        self._held_mods = set()
-        self._belt_key_btns[col].configure(text="press…")
-        self._belt_keys_hint.configure(
-            text=f"Press the in-game key you want for column {col} (Esc restores the default).",
-            text_color=ACCENT)
-        self.focus_force()
-        self.bind("<KeyPress>", self._on_hotkey_capture_key)
-        self.bind("<KeyRelease>", self._on_hotkey_capture_release)
-
     def _on_hotkey_capture_release(self, event):
         mod = hotkey_mod_from_keysym(getattr(event, "keysym", ""))
         if mod:
             self._held_mods.discard(mod)
 
     def _on_hotkey_capture_key(self, event):
-        """Finish a capture: global combo from held modifiers, or a bare belt key."""
+        """Finish a global-hotkey capture (held modifiers + a key)."""
         if self._capturing is None:
             return
         keysym = getattr(event, "keysym", "")
         mod = hotkey_mod_from_keysym(keysym)
         if mod:
             self._held_mods.add(mod)
-            return
-        if self._capturing == "belt_key":
-            if keysym.lower() in ("escape", "delete"):
-                self.config.set_belt_key(self._capture_col, "")
-                self.config.save()
-                self._emit_log(f"Belt column {self._capture_col} reset to its default key.", "info")
-                self._end_capture()
-                return
-            name = keysym_to_key_name(keysym)
-            if not name:
-                self._belt_keys_hint.configure(text="Unsupported key — try a letter, number, F-key or arrow.", text_color=DANGER)
-                return
-            self.config.set_belt_key(self._capture_col, name)
-            self.config.save()
-            self._emit_log(f"Belt column {self._capture_col} set to {name}.", "info")
-            self._end_capture()
             return
         if keysym.lower() in ("escape", "delete"):
             self.config.behavior["toggle_hotkey"] = ""
@@ -910,9 +893,6 @@ class MainApp(ctk.CTk):
         self._capture_col = None
         if mode == "hotkey":
             self._sync_hotkey_ui()
-        elif mode == "belt_key":
-            self._refresh_belt_keys()
-            self._belt_keys_hint.configure(text="")
 
     def _sync_hotkey_ui(self):
         """Push the stored combo onto the topbar hotkey button."""
@@ -947,10 +927,13 @@ class MainApp(ctk.CTk):
         self.after(0, self._toggle_enabled)
 
     def _refresh_belt_keys(self):
-        """Push the bound in-game keys onto the per-column buttons."""
+        """Push the bound in-game keys onto the per-column entries."""
         keys = self.config.belt_keys_map()
         for i, col in enumerate(m.BELT_COLUMN_KEYS):
-            self._belt_key_btns[col].configure(text=f"{col}  ->  {keys[i]}")
+            entry = self._belt_key_entries.get(col)
+            if entry:
+                entry.delete(0, "end")
+                entry.insert(0, keys[i])
 
     def _reset_keys(self):
         """Restore default behaviour switches, merc modifier, and belt plan."""

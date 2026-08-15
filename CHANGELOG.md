@@ -5,6 +5,54 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.2-beta] - 2026-08-15
+
+Unified decision logic (no smart/plain tiers) and a robust best-effort fallback
+so a critical stat never sits at 0% doing nothing.  Belt-hotkey UI redesigned to
+a single horizontal row of `[checkbox] [key input]` pairs.
+
+### Fixed
+
+- **"Still not drinking at 0%" root cause addressed.**  Belt potions the app
+  cannot classify (`kind == None`, i.e. the game version/mods are not calibrated)
+  were silently dropped by the reader — the belt column then looked empty and
+  the watcher reported "No … potion left on the belt" and pressed nothing.  The
+  reader now records unidentified belt potions so the column geometry is correct
+  and the watcher can act on them.
+- **Best-effort fallback on a critical stat.**  When HP or mana is critical,
+  no recognised potion of the wanted kind is on the managed belt, but
+  unrecognised potions ARE present, the watcher presses the column holding an
+  unrecognised potion as a best-effort (preferring the stat's own standard
+  column: heal→Q, mana→W, rejuv→E) and warns once that the Calibrate tab should
+  be taught the build's codes for exact drinking.  This guarantees a potion is
+  always drunk when the stat is at the rejuv line, even with uncalibrated codes.
+- **Reader: unclassified belt potions** now fill the slot and the per-column
+  counter, so `belt_empty` / `belt_slots` geometry stays accurate when the
+  active combo does not yet know a potion's txtFileNo.
+
+### Changed
+
+- **No tiers — one decision path.**  The legacy "plain tier" (`_plain_tick`)
+  is removed; `_tick` runs only the unified `plan_consume` logic regardless of
+  the (now-vestigial) `behavior.smart` flag.  The dead `_plain_tick` method and
+  the misleading `test_smart_disabled_uses_plain_tier` test are gone.
+- **Belt-hotkey UI is horizontal single-char inputs.**  Replaced the vertical
+  `[tickbox] [Column -> Key button]` rows with one horizontal row: for each of
+  Q/W/E/R a checkbox and a single character text input showing the bound key —
+  nothing more.  Type a key and press Enter (or focus out) to rebind; blank /
+  Esc / Delete restores the default.  The old button-capture flow is removed.
+- `_smart_tick` now passes a `critical` flag into `_act` (so the best-effort
+  fallback fires only on the rejuv-critical line, never on a routine threshold
+  dip) and drives `_act` for `missing` kinds too (previously only logged).
+
+### Added
+
+- Comprehensive combination tests: critical heal/mana/rejuv with
+  readable/unreadable belts, classified vs unclassified potions, the
+  best-effort fallback, managed-column gating of the fallback, and tier-
+  independence (the `smart` flag no longer changes behaviour).  Test suite:
+  **118 tests green** (compileall + headless UI smoke pass).
+
 ## [1.8.1-beta] - 2026-08-15
 
 Core drinking bug fixes and a UI clean-up.  Versioning now uses small

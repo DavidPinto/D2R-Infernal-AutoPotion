@@ -1098,20 +1098,19 @@ class WatcherTests(unittest.TestCase):
         w._tick(self._snap(hp=70, mana=90))
         self.assertEqual(w.sender.pressed_keys, [("heal", None)])
 
-    def test_plain_tier_drinks_mana_when_rejuv_unavailable(self):
+    def test_critical_mana_drinks_mana_when_rejuv_unavailable(self):
         w = self._watcher()
-        w.config.set_smart_enabled(False)
         # Near-0% mana, HP fine, a mana potion on the belt, no rejuv: the
-        # plain tier must fall back to a mana potion, not sit on the rejuv check.
+        # unified logic must drink the mana potion, not sit on the rejuv check.
         snap = self._belt_snap(hp=170, mana=2, max_hp=200, max_mana=200,
                                columns=[self._col("Q", 602), self._col("W", 608)])
         w._tick(snap)
         self.assertEqual(w.sender.pressed_keys, [("mana", "W")])
 
-    def test_plain_tier_prefers_rejuv_over_mana_when_available(self):
+    def test_critical_mana_prefers_rejuv_over_weak_mana_when_available(self):
         w = self._watcher()
-        w.config.set_smart_enabled(False)
-        # Rejuv present and warranted: it is drunk (covers MP) and mana is not.
+        # Rejuv present and warranted: it is drunk (covers MP) and the
+        # under-strength mana potion is not wasted.
         snap = self._belt_snap(hp=170, mana=2, max_hp=200, max_mana=200,
                                columns=[self._col("W", 608), self._col("R", 531)])
         w._tick(snap)
@@ -1166,16 +1165,86 @@ class WatcherTests(unittest.TestCase):
         w._tick(snap)
         self.assertEqual(w.sender.pressed_keys, [("heal", "Q"), ("mana", "W")])
 
-    def test_smart_disabled_uses_plain_tier(self):
+    def test_no_tiers_smart_flag_changes_nothing(self):
         w = self._watcher()
+        # There is exactly one decision path (plan_consume): the legacy
+        # smart/plain flag must not change which potion is drunk.
         snap = self._belt_snap(hp=50, mana=190, max_hp=200, max_mana=200,
                                columns=[self._col("Q", 605), self._col("R", 531)])
-        w._tick(snap)                                  # smart: covering heal wins
+        w._tick(snap)
         self.assertEqual(w.sender.pressed_keys, [("heal", "Q")])
         w.config.set_smart_enabled(False)
         w.sender.pressed, w.sender.pressed_keys = [], []
-        w._tick(snap)                                  # plain: rejuv wins on critical
-        self.assertEqual(w.sender.pressed_keys, [("rejuv", "R")])
+        w._last_used["heal"] = time.monotonic() - 10.0   # clear the cooldown gate
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "Q")])
+
+    def test_critical_mana_presses_unclassified_column(self):
+        # A critical stat must not sit at 0% when the wanted potion may be on
+        # the belt but uncalibrated (kind None): press the unrecognised column.
+        w = self._watcher()
+        snap = self._belt_snap(hp=170, mana=2, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 9999), self._col("W", 9999)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "W")])
+        self.assertIn("mana-unclassified", w._warned)
+
+    def test_critical_heal_presses_unclassified_column(self):
+        w = self._watcher()
+        snap = self._belt_snap(hp=10, mana=190, max_hp=200, max_mana=200,
+                               columns=[self._col("R", 9999)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
+
+    def test_both_critical_presses_unclassified_column(self):
+        w = self._watcher()
+        snap = self._belt_snap(hp=20, mana=10, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 9999)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("rejuv", "Q")])
+
+    def test_unclassified_fallback_respects_managed_columns(self):
+        w = self._watcher()
+        w.config.set_managed_columns(["Q", "W", "E"])   # R off-limits
+        snap = self._belt_snap(hp=170, mana=2, max_hp=200, max_mana=200,
+                               columns=[self._col("R", 9999)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [])     # R ignored entirely
+
+    def test_unclassified_fallback_only_on_critical(self):
+        w = self._watcher()
+        # A non-critical mana dip must NOT press an unrecognised column (no
+        # wasted/wrong potions on a small deficit).
+        snap = self._belt_snap(hp=170, mana=100, max_hp=200, max_mana=200,
+                               columns=[self._col("W", 9999)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [])
+
+    def test_critical_missing_with_no_potions_no_press(self):
+        w = self._watcher()
+        snap = self._belt_snap(hp=170, mana=2, max_hp=200, max_mana=200,
+                               columns=[])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [])
+        self.assertIn("mana", w._out_of_stock)
+
+    def test_unclassified_fallback_prefers_action_standard_column(self):
+        w = self._watcher()
+        # Critical mana: a classified heal on Q and an unclassified potion on W.
+        # The unclassified W is preferred (it matches the mana column).
+        snap = self._belt_snap(hp=170, mana=2, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 602), self._col("W", 9999)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "W")])
+
+    def test_unclassified_fallback_uses_any_when_standard_occupied(self):
+        w = self._watcher()
+        # Critical mana: standard mana column W holds a classified heal,
+        # unclassified potion on R. The watcher still falls back to R.
+        snap = self._belt_snap(hp=170, mana=2, max_hp=200, max_mana=200,
+                               columns=[self._col("W", 602), self._col("R", 9999)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "R")])
 
 
 class KeysTests(unittest.TestCase):
