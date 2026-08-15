@@ -597,26 +597,134 @@ class GameReader:
             return self._base() + self.offsets.UI
         return 0
 
-    def calibrate_ui_struct(self) -> int | None:
-        """Find the live UI struct base address.
+    # -------------------------------------------------------------- menu calibration
+    def _get_ui_base(self) -> int:
+        """Return the live UI struct base address.
 
-        On this Infernal build, the live UI struct is at GameData+0x8 but
-        menu flag indices are shifted (Inventory flag not at 0x01).  This
-        method returns the GameData+0x8 address which is the live struct.
-        For accurate menu detection, flag indices would need remapping
-        (deferred).  Returns the struct base address if found, else None.
-        """
-        # The live UI struct is at GameData+0x8 (verified by pointer chase)
+        Uses calibrated address if available, otherwise falls back to pointer
+        chase from GameData (most reliable) or signature scan."""
+        if hasattr(self, "_ui_base_cached") and self._ui_base_cached:
+            return self._ui_base_cached
+        # Calibrated address from config
+        if self.config is not None:
+            calibrated = self.config.calibrated_ui_address()
+            if calibrated:
+                self._ui_base_cached = calibrated
+                return calibrated
+        # Pointer chase: GameData -> +0x8 = UI struct (works on all known builds)
         if self.offsets.GameData:
             game_data_addr = self._base() + self.offsets.GameData
             ptr = self.proc.read_u64(game_data_addr + 0x8)
             if ptr and self.proc.module_base <= ptr < self.proc.module_base + self.proc.module_size + 0x10000000:
-                # Verify it's a readable struct with flag-like bytes
                 test_buf = self.proc.read_bytes(ptr - 0xA, 0x16D)
                 if len(test_buf) == 0x16D:
                     self._ui_base_cached = ptr
                     return ptr
-        return None
+        # Fallback: signature scan result
+        if self.offsets.UI:
+            return self._base() + self.offsets.UI
+        return 0
+
+    def _get_flag_map(self) -> dict[str, int] | None:
+        """Return calibrated flag index map {menu_name: byte_index}."""
+        if self.config is not None:
+            fmap = self.config.calibrated_ui_flags()
+            if fmap:
+                return fmap
+        # Default MENU_FLAGS (works on vanilla/classic builds)
+        from . import models as m
+        return m.MENU_FLAGS
+
+    def open_menus(self) -> dict:
+        """Read the UI panel flags using calibrated struct address + flag map."""
+        ui = self._get_ui_base()
+        if not ui:
+            return {}
+        buf = self.proc.read_bytes(ui - 0xA, 0x16D)
+        if len(buf) != 0x16D:
+            return {}
+        fmap = self._get_flag_map()
+        if not fmap:
+            return {}
+        menus = {}
+        for name, idx in fmap.items():
+            menus[name] = buf[idx] != 0 if idx < len(buf) else False
+        menus["MapShown"] = self.proc.read_u8(ui) != 0
+        return menus
+
+    def calibrate_ui(self, step: str, progress_cb: callable = None) -> dict | None:
+        """Interactive UI calibration.
+
+        Returns a dict with 'address' and 'flags' (menu->index) when complete,
+        or None if cancelled/failed.  The caller handles UI prompts.
+
+        Steps (progress_cb called with step name):
+        - "base": find UI struct address (pointer chase)
+        - "baseline": all menus closed
+        - each menu in MENU_FLAGS: "open:<menu>", "close:<menu>"
+        """
+        from . import models as m
+        fmap = {}
+
+        # Step 1: find UI struct address
+        if progress_cb:
+            progress_cb("base")
+        ui = self._get_ui_base()
+        if not ui:
+            return None
+
+        # Step 2: baseline (all closed)
+        if progress_cb:
+            progress_cb("baseline")
+        time.sleep(0.5)
+        buf_base = self.proc.read_bytes(ui - 0xA, 0x16D)
+        if len(buf_base) != 0x16D:
+            return None
+
+        # Step 3: for each menu, detect which byte changes
+        for menu_name, default_idx in m.MENU_FLAGS.items():
+            # Skip menus that don't typically appear (Chat, QuestLog, etc.)
+            # Core blocking menus: Inventory, Character, SkillTree, NPCInteract,
+            # NPCShop, Stash, Anvil, Waypoint, Cube, MercInventory, QuitMenu
+            if menu_name not in m.BLOCKING_MENUS:
+                fmap[menu_name] = default_idx
+                continue
+
+            # Open menu
+            if progress_cb:
+                progress_cb(f"open:{menu_name}")
+            time.sleep(2.0)  # user opens menu
+            buf_open = self.proc.read_bytes(ui - 0xA, 0x16D)
+            if len(buf_open) != 0x16D:
+                return None
+
+            # Find byte that changed 0 -> non-zero
+            changed = [i for i in range(0x16D) if buf_base[i] == 0 and buf_open[i] != 0]
+            if not changed:
+                # Use default index as fallback
+                fmap[menu_name] = default_idx
+            else:
+                fmap[menu_name] = changed[0]  # first changing byte
+
+            # Close menu
+            if progress_cb:
+                progress_cb(f"close:{menu_name}")
+            time.sleep(1.5)  # user closes menu
+            buf_base = self.proc.read_bytes(ui - 0xA, 0x16D)
+            if len(buf_base) != 0x16D:
+                return None
+
+        # Verify: read one more time with all closed
+        buf_final = self.proc.read_bytes(ui - 0xA, 0x16D)
+        if len(buf_final) != 0x16D:
+            return None
+
+        # All flags should be 0 now
+        for name, idx in fmap.items():
+            if buf_final[idx] != 0:
+                pass  # some menus may leave residue, acceptable
+
+        return {"address": ui, "flags": fmap}
 
     # ----------------------------------------------------------- snapshot
     def snapshot(self) -> m.PlayerSnapshot:

@@ -577,3 +577,15 @@ class AppConfig:
         """Store the calibrated UI struct base address."""
         self._data["calibrated_ui_address"] = int(addr)
         self.save()
+
+    def calibrated_ui_flags(self) -> dict[str, int] | None:
+        """Persisted menu flag index map {menu_name: byte_index}."""
+        fmap = self._data.get("calibrated_ui_flags")
+        if isinstance(fmap, dict):
+            return {str(k): int(v) for k, v in fmap.items()}
+        return None
+
+    def set_calibrated_ui_flags(self, fmap: dict[str, int]) -> None:
+        """Store the calibrated menu flag index map."""
+        self._data["calibrated_ui_flags"] = {str(k): int(v) for k, v in fmap.items()}
+        self.save()

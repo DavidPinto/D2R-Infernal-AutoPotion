@@ -5,6 +5,25 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.6-beta] - 2026-08-15
+
+### Added
+- **Full menu calibration** in Calibrate tab ("Calibrate menus").
+  Guides user to CLOSE all menus, then OPEN/CLOSE each blocking menu
+  (Inventory, Stash, Character, etc.) one by one. Detects the exact byte
+  index for each menu flag. Persists both UI struct address AND flag index
+  map. Works on ANY build — no hardcoded flag indices.
+
+### Changed
+- `GameReader.open_menus()` uses calibrated flag indices when available,
+  falling back to defaults. Accurate per-panel detection on all builds.
+- Dashboard "menus open" indicator now accurate when calibrated.
+- Default `pause_when_menus_open = true` (calibration enables reliability).
+
+### Fixed
+- Diagnostics fixed: `GameReader` accepts optional `config`.
+- Calibration no longer assumes specific flag indices — learns them.
+
 ## [1.8.5-beta] - 2026-08-15
 
 ### Added
