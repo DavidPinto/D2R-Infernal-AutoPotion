@@ -208,6 +208,57 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(d.belt_layout(), {})
         self.assertEqual(d.belt_ratio(), {"heal": 8, "mana": 6, "rejuv": 2})
 
+    def test_belt_key_accessors(self):
+        c = cfg.AppConfig.load()
+        self.assertEqual(c.belt_keys_map(), {0: "Q", 1: "W", 2: "E", 3: "R"})
+        self.assertEqual(c.belt_key("Q"), "Q")
+        self.assertEqual(c.belt_key(0), "Q")
+        self.assertEqual(c.belt_key(2), "E")
+        self.assertEqual(c.belt_key("Bogus"), "")   # unknown column -> no key
+        self.assertEqual(c.belt_key(-1), "")
+        c.set_belt_key("Q", "A")
+        self.assertEqual(c.belt_key("Q"), "A")
+        c.set_belt_key(1, "NUMPAD0")
+        self.assertEqual(c.belt_key(1), "NUMPAD0")
+        c.set_belt_key("Q", "ESC")                  # Esc/Delete/empty -> default
+        self.assertEqual(c.belt_key("Q"), "Q")
+        c.set_belt_key("W", "DELETE")
+        self.assertEqual(c.belt_key("W"), "W")
+        c.set_belt_key("W", "")
+        self.assertEqual(c.belt_key("W"), "W")
+        c.set_belt_key("E", "Bogus")                # unresolvable -> default
+        self.assertEqual(c.belt_key("E"), "E")
+        c.set_belt_key("R", "F2")
+        self.assertEqual(c.belt_keys_map(), {0: "Q", 1: "W", 2: "E", 3: "F2"})
+
+    def test_belt_keys_persist_and_reset(self):
+        c = cfg.AppConfig.load()
+        c.set_belt_key("Q", "A")
+        c.set_belt_key("W", "F1")
+        c.save()
+        d = cfg.AppConfig.load()
+        self.assertEqual(d.belt_key("Q"), "A")
+        self.assertEqual(d.belt_key("W"), "F1")
+        self.assertEqual(d.belt_keys_map(), {0: "A", 1: "F1", 2: "E", 3: "R"})
+        d.reset_to_defaults()
+        self.assertEqual(d.belt_keys_map(), {0: "Q", 1: "W", 2: "E", 3: "R"})
+
+    def test_belt_refill_mapping_accessors(self):
+        c = cfg.AppConfig.load()
+        self.assertFalse(c.belt_refill_mapping()["calibrated"])
+        c.set_belt_refill_mapping(29.5, 100, 200)
+        self.assertTrue(c.belt_refill_mapping()["calibrated"])
+        self.assertEqual(c.belt_refill_mapping()["cell"], 29.5)
+        self.assertEqual(c.belt_refill_mapping()["origin_x"], 100)
+        self.assertEqual(c.belt_refill_mapping()["origin_y"], 200)
+        c.save()
+        d = cfg.AppConfig.load()
+        self.assertTrue(d.belt_refill_mapping()["calibrated"])
+        self.assertEqual(d.belt_refill_mapping()["cell"], 29.5)
+        d.clear_belt_refill_mapping()
+        self.assertFalse(d.belt_refill_mapping()["calibrated"])
+        self.assertEqual(d.belt_refill_mapping()["cell"], 29.0)
+
 
 class ModelsTests(unittest.TestCase):
     def test_potion_kinds(self):
@@ -611,10 +662,19 @@ class RefillTests(unittest.TestCase):
         self.assertEqual(acts[0]["kind"], "rejuv")
         self.assertEqual(acts[0]["deficit"], 150)
 
-    def test_plan_consume_rejuv_when_both_stats_critical(self):
+    def test_plan_consume_both_stats_critical_without_rejuv_drinks_what_is_there(self):
+        # Both critical, no rejuv on the belt: drink heal AND mana rather than
+        # nothing (a potion sitting in the wrong slot is still drunk).
         pc = self._pc([self._col("Q", 602), self._col("R", 608)])
+        acts, missing = self._consume(40, 40, 200, 200, pc)
+        self.assertEqual([a["action"] for a in acts], ["heal", "mana"])
+        self.assertEqual(missing, [])
+
+    def test_plan_consume_both_stats_critical_with_rejuv(self):
+        pc = self._pc([self._col("Q", 602), self._col("R", 608), self._col("E", 531)])
         acts, _ = self._consume(40, 40, 200, 200, pc)
         self.assertEqual(acts[0]["action"], "rejuv")
+        self.assertEqual(acts[0]["kind"], "rejuv")
 
     def test_plan_consume_prefers_mana_when_only_mp_low(self):
         pc = self._pc([self._col("W", 610), self._col("E", 530)])
@@ -631,12 +691,22 @@ class RefillTests(unittest.TestCase):
         acts, _ = self._consume(190, 190, 200, 200, pc)
         self.assertEqual(acts, [])
 
-    def test_plan_consume_missing_reported(self):
-        # Rejuv wanted but no rejuv column on the belt.
+    def test_plan_consume_last_resort_drinks_understrength_potion(self):
+        # HP critical, only an under-strength Minor heal on the belt, no rejuv:
+        # the app still drinks it (potion in the wrong slot is never wasted).
         pc = self._pc([self._col("Q", 602)])
         acts, missing = self._consume(50, 200, 200, 200, pc)
-        self.assertEqual(acts[0]["action"], "rejuv")
-        self.assertEqual(missing, ["rejuv"])
+        self.assertEqual(acts[0]["action"], "heal")
+        self.assertEqual(acts[0]["kind"], "heal")
+        self.assertEqual(missing, [])
+
+    def test_plan_consume_missing_reported(self):
+        # HP critical, belt only holds a mana potion (no heal, no rejuv):
+        # nothing to drink and the wanted kind is reported missing.
+        pc = self._pc([self._col("W", 608)])
+        acts, missing = self._consume(50, 200, 200, 200, pc)
+        self.assertEqual(acts, [])
+        self.assertEqual(missing, ["heal"])
 
     def test_plan_consume_respects_managed_columns(self):
         # Covering heal sits on R, but R is not managed -> rejuv instead.
@@ -715,6 +785,39 @@ class RefillTests(unittest.TestCase):
         self.assertEqual(plan_layout_refill([3], {}, [], {}), [])
         self.assertEqual(plan_layout_refill(
             [3], {}, [self._potion(532, "other", -1)], {}), [])
+
+    # ------------------------------------------------------- belt moves
+    def test_plan_moves_relocates_wrong_column_potion(self):
+        # Mana potion sitting in the HP column (layout pins col 0 = heal) is
+        # moved into the mana column's empty slot.
+        from d2r.refill import plan_moves
+        layout = {0: "heal"}                          # col 0 wants heal
+        content = {0: "mana", 1: "mana"}              # col 1 is the mana column
+        moves = plan_moves(content, layout, [5])
+        self.assertEqual(moves, [{"action": "move", "from": 0, "to": 5, "kind": "mana"}])
+
+    def test_plan_moves_uses_dominant_kind_without_layout(self):
+        # No layout pins: a potion is misplaced only when its own column's
+        # dominant kind differs from its own.
+        from d2r.refill import plan_moves
+        content = {0: "mana", 4: "mana", 5: "heal"}
+        self.assertEqual(plan_moves(content, {}, [1]), [])
+
+    def test_plan_moves_never_double_books_one_slot(self):
+        # Two misplaced mana potions but only one empty target slot: one move.
+        from d2r.refill import plan_moves
+        layout = {0: "heal", 4: "heal"}               # whole col 0 wants heal
+        content = {0: "mana", 4: "mana", 5: "mana"}   # col 1 holds mana
+        moves = plan_moves(content, layout, [1])
+        self.assertEqual(len(moves), 1)
+        self.assertEqual(moves[0], {"action": "move", "from": 0, "to": 1, "kind": "mana"})
+
+    def test_plan_moves_only_moves_into_waiting_column(self):
+        # No column wants the misplaced potion's kind -> nothing to move.
+        from d2r.refill import plan_moves
+        layout = {0: "heal"}
+        content = {0: "mana"}                          # no mana column at all
+        self.assertEqual(plan_moves(content, layout, [5, 6, 7]), [])
 
 
 class FakeSender:
@@ -960,6 +1063,20 @@ class WatcherTests(unittest.TestCase):
         w._tick(s)
         self.assertEqual(w.sender.pressed_keys, [("heal", None)])
 
+    def test_use_presses_rebound_column_key(self):
+        w = self._watcher()
+        w.config.set_belt_key("Q", "A")   # user remapped Q -> A in the game
+        snap = self._belt_snap(hp=70, mana=90, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 602)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "A")])
+        w.sender.pressed, w.sender.pressed_keys = [], []
+        w._last_used["heal"] = time.monotonic() - 10.0   # clear the cooldown gate
+        # The unreadable-belt path still passes the action through (the real
+        # KeySender resolves the rebound column inside _fallback_key).
+        w._tick(self._snap(hp=70, mana=90))
+        self.assertEqual(w.sender.pressed_keys, [("heal", None)])
+
     def test_pick_respects_managed_columns(self):
         w = self._watcher()
         # HP 45% (above the rejuv line) so only the heal branch runs.
@@ -1039,6 +1156,20 @@ class KeysTests(unittest.TestCase):
             self.assertIsNotNone(resolve_key(name), f"{action} -> {name}")
         self.assertEqual(FALLBACK_KEYS["heal"], "Q")
         self.assertEqual(FALLBACK_KEYS["merc_heal"], "Q")
+
+    def test_fallback_key_honours_belt_rebind(self):
+        from d2r.keys import KeySender
+        c = cfg.AppConfig.load()
+        c.reset_to_defaults()
+        s = KeySender(c)
+        self.assertEqual(s._fallback_key("heal"), "Q")
+        self.assertEqual(s._fallback_key("rejuv"), "E")
+        self.assertEqual(s._fallback_key("merc_heal"), "Q")
+        c.set_belt_key("Q", "A")
+        c.set_belt_key("E", "F1")
+        self.assertEqual(s._fallback_key("heal"), "A")
+        self.assertEqual(s._fallback_key("rejuv"), "F1")
+        self.assertEqual(s._fallback_key("merc_heal"), "A")
 
 
 class HotkeyTests(unittest.TestCase):

@@ -428,6 +428,60 @@ class GameReader:
                 unit = int.from_bytes(buf[0x150:0x158], "little")
         return out
 
+    def belt_items(self) -> list[dict]:
+        """Belt potions with their belt slot index, for calibration hover
+        detection (mirrors :meth:`inventory_potions` for the belt panel).
+
+        Each entry is ``{"unit_id", "txt", "kind", "grade", "slot", "x", "y"}``
+        where ``slot`` is the belt slot index (row * 4 + column).  The refill
+        calibration uses this to tie a hovered belt potion to a belt grid cell;
+        the inventory click grid and the belt panel solve their own origins."""
+        out: list[dict] = []
+        if not self.offsets.UnitTable:
+            return out
+        base = self._base()
+        table = base + self.offsets.UnitTable + m.UNIT_TABLE_ITEM_OFFSET
+        main_id = 0
+        pu, _ = self._find_player_unit()
+        if pu:
+            main_id = self.proc.read_u32(pu + m.UNIT_OFFSET_UNIT_ID)
+        buckets = self.proc.read_bytes(table, m.UNIT_TABLE_ENTRIES * 8)
+        if len(buckets) < m.UNIT_TABLE_ENTRIES * 8:
+            return out
+        seen = 0
+        for i in range(m.UNIT_TABLE_ENTRIES):
+            unit = int.from_bytes(buckets[i * 8:i * 8 + 8], "little")
+            while unit and seen < 512:
+                seen += 1
+                buf = self.proc.read_bytes(unit, 0x160)
+                if len(buf) < 0x158:
+                    break
+                if int.from_bytes(buf[0x00:0x04], "little") != m.ITEM_UNIT_TYPE:
+                    unit = int.from_bytes(buf[0x150:0x158], "little")
+                    continue
+                txt = int.from_bytes(buf[0x04:0x08], "little")
+                kind = self.codes.kind(txt)
+                if not kind:
+                    unit = int.from_bytes(buf[0x150:0x158], "little")
+                    continue
+                loc = int.from_bytes(buf[0x0C:0x10], "little")
+                ud = int.from_bytes(buf[0x10:0x18], "little")
+                owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
+                if loc == m.ITEM_LOC_BELT and (not main_id or owner == main_id):
+                    path = int.from_bytes(buf[0x38:0x40], "little")
+                    if path:
+                        slot = self.proc.read_u16(path + m.ITEM_PATH_OFFSET_X)
+                        out.append({
+                            "unit_id": int.from_bytes(buf[0x08:0x0C], "little"),
+                            "txt": txt, "kind": kind,
+                            "grade": self.codes.grade(txt),
+                            "slot": slot,
+                            "x": slot,
+                            "y": self.proc.read_u16(path + m.ITEM_PATH_OFFSET_Y),
+                        })
+                unit = int.from_bytes(buf[0x150:0x158], "little")
+        return out
+
     def hovered_item_unit(self) -> int:
         """Unit id of the item the mouse is hovering over, or 0 when none.
 

@@ -204,7 +204,7 @@ class KeySender:
         configured feed-to-merc modifier (default Shift).  Returns False if the
         binding is unresolved or the injection was rejected by the OS."""
         modifier = self.config.merc_modifier() if action.startswith("merc_") else None
-        key_name = key if key else FALLBACK_KEYS.get(action, "")
+        key_name = key if key else self._fallback_key(action)
         vk = self.resolve(key_name)
         if vk is None:
             return False
@@ -213,6 +213,15 @@ class KeySender:
         if ok and self.config.behavior.get("sound", True):
             self.chime()
         return ok
+
+    def _fallback_key(self, action: str) -> str:
+        """Column letter for an action's fallback binding, honouring rebinds.
+
+        The built-in fallbacks (heal Q / mana W / rejuv E) are column letters;
+        if the user rebinds a belt column in the game the app must press the
+        rebound key even while the belt content is unreadable."""
+        letter = FALLBACK_KEYS.get(action, "")
+        return self.config.belt_key(letter) if letter else ""
 
     @staticmethod
     def chime() -> None:

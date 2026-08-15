@@ -105,7 +105,7 @@ DEFAULTS = {
         # Character class used for potion restore amounts ("" = auto-detect the
         # class from the game each tick; otherwise a fixed class from the list).
         "potion_class_override": "",
-        # Global hotkey that toggles arm/disarm while you are in-game.
+        # Global hotkey that toggles enable/disable while you are in-game.
         # Format "Ctrl+Alt+F12" / "Ctrl+Shift+F9"; "" = disabled (default).
         "toggle_hotkey": "",
         # Modifier held together with a belt hotkey (Q/W/E/R) to give that
@@ -129,15 +129,25 @@ DEFAULTS = {
     # Belt columns (Q/W/E/R) the app may drink from and refill into.  Unchecked
     # columns are left alone entirely (the user manages those manually).
     "managed": ["Q", "W", "E", "R"],
+    # The actual hotkey bound to each belt column (keyed by the column's DEFAULT
+    # letter Q/W/E/R).  D2R defaults are Q/W/E/R but the game lets you rebind
+    # them; the app must press the rebound key so it reads/writes the right slot.
+    "belt_keys": {"Q": "Q", "W": "W", "E": "E", "R": "R"},
     # Belt refill: while the inventory panel is open the app moves a matching
-    # potion from the inventory into the first empty managed belt slot.
-    # "calibrated" means click positions were measured against the live window.
+    # potion from the inventory into an empty managed belt slot (and relocates a
+    # potion sitting in the wrong column).  "calibrated" means the *inventory*
+    # click grid was measured against the live window; the belt panel has its own
+    # origin ("belt_origin_*") because the belt grid sits at a different spot.
     "refill": {
         "enabled": False,
         "calibrated": False,
         "cell": 29.0,
         "origin_x": 0.0,
         "origin_y": 0.0,
+        "belt_calibrated": False,
+        "belt_cell": 29.0,
+        "belt_origin_x": 0.0,
+        "belt_origin_y": 0.0,
         "interval_ms": 400,
     },
     # Smart-tier belt plan.  "layout" pins a potion kind per belt slot X
@@ -162,6 +172,7 @@ class AppConfig:
     combos: dict = field(default_factory=dict)
     combo: str = ""
     managed: list = field(default_factory=lambda: list(DEFAULTS["managed"]))
+    belt_keys: dict = field(default_factory=lambda: dict(DEFAULTS["belt_keys"]))
     refill: dict = field(default_factory=lambda: dict(DEFAULTS["refill"]))
     layout: dict = field(default_factory=lambda: dict(DEFAULTS["layout"]))
     ratio: dict = field(default_factory=lambda: dict(DEFAULTS["ratio"]))
@@ -209,6 +220,49 @@ class AppConfig:
         valid = set(BELT_COLUMN_KEYS)
         self.managed = [k for k in keys if k in valid] or list(BELT_COLUMN_KEYS)
 
+    # ------------------------------------------------------ belt column keys
+    def _column_index(self, column) -> int | None:
+        """Belt column index (0..3) from an index or a Q/W/E/R letter."""
+        if isinstance(column, bool):
+            return None
+        if isinstance(column, int):
+            return column if 0 <= column < len(BELT_COLUMN_KEYS) else None
+        valid = {k: i for i, k in enumerate(BELT_COLUMN_KEYS)}
+        return valid.get(str(column).strip().upper())
+
+    def belt_key(self, column) -> str:
+        """The hotkey bound to a belt column (index 0..3 or a Q/W/E/R letter).
+
+        Falls back to the column's default letter when the stored value is
+        missing or invalid, so an old/corrupt config can never produce a None
+        key to press."""
+        idx = self._column_index(column)
+        if idx is None:
+            return ""
+        default = BELT_COLUMN_KEYS[idx]
+        name = str(self.belt_keys.get(default, default) or default).strip().upper()
+        return name if name else default
+
+    def set_belt_key(self, column, name) -> None:
+        """Bind a hotkey to a belt column.  An empty/unresolvable name resets
+        the column to its default letter (D2R's own binding)."""
+        idx = self._column_index(column)
+        if idx is None:
+            return
+        default = BELT_COLUMN_KEYS[idx]
+        name = str(name or "").strip().upper()
+        if name in ("ESC", "DELETE"):
+            name = ""
+        elif name:
+            from .keys import resolve_key  # lazy: keys imports config
+            if resolve_key(name) is None:
+                name = ""
+        self.belt_keys[default] = name if name else default
+
+    def belt_keys_map(self) -> dict:
+        """{column index: bound hotkey} for all four belt columns."""
+        return {i: self.belt_key(i) for i in range(len(BELT_COLUMN_KEYS))}
+
     def refill_enabled(self) -> bool:
         return bool(self.refill.get("enabled", False))
 
@@ -233,6 +287,27 @@ class AppConfig:
         self.refill["cell"] = float(DEFAULTS["refill"]["cell"])
         self.refill["origin_x"] = 0.0
         self.refill["origin_y"] = 0.0
+
+    def belt_refill_mapping(self) -> dict:
+        """Belt-panel click mapping (client-relative origin + cell size)."""
+        return {
+            "calibrated": bool(self.refill.get("belt_calibrated", False)),
+            "cell": float(self.refill.get("belt_cell", DEFAULTS["refill"]["belt_cell"])),
+            "origin_x": float(self.refill.get("belt_origin_x", 0.0)),
+            "origin_y": float(self.refill.get("belt_origin_y", 0.0)),
+        }
+
+    def set_belt_refill_mapping(self, cell: float, origin_x: float, origin_y: float) -> None:
+        self.refill["belt_cell"] = float(cell)
+        self.refill["belt_origin_x"] = float(origin_x)
+        self.refill["belt_origin_y"] = float(origin_y)
+        self.refill["belt_calibrated"] = True
+
+    def clear_belt_refill_mapping(self) -> None:
+        self.refill["belt_calibrated"] = False
+        self.refill["belt_cell"] = float(DEFAULTS["refill"]["belt_cell"])
+        self.refill["belt_origin_x"] = 0.0
+        self.refill["belt_origin_y"] = 0.0
 
     # ------------------------------------------------------- potion behaviour
     def potion_margin(self) -> float:
@@ -324,6 +399,9 @@ class AppConfig:
             }
             cfg.combo = str(data.get("combo", ""))
             cfg.managed = [k for k in data.get("managed", []) if isinstance(k, str)]
+            belt_keys = data.get("belt_keys")
+            if isinstance(belt_keys, dict):
+                cfg.belt_keys.update({str(k): v for k, v in belt_keys.items()})
             refill = data.get("refill")
             if isinstance(refill, dict):
                 cfg.refill.update({k: v for k, v in refill.items()})
@@ -346,6 +424,7 @@ class AppConfig:
         self.combos = dict(DEFAULTS["combos"])
         self.combo = ""
         self.managed = list(DEFAULTS["managed"])
+        self.belt_keys = dict(DEFAULTS["belt_keys"])
         self.refill = dict(DEFAULTS["refill"])
         self.layout = dict(DEFAULTS["layout"])
         self.ratio = dict(DEFAULTS["ratio"])

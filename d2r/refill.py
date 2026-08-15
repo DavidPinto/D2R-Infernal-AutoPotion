@@ -132,53 +132,128 @@ def plan_consume(hp_percent, mana_percent, hp_def, mp_def, max_hp, max_mana,
     lists kinds that were wanted but no potion of that kind is on the belt.
 
     Smart rules:
-      * Both stats in the rejuv range (or one critically low with no covering
-        specific potion) -> rejuv.
-      * Only HP is low and a covering heal sits on the belt -> heal, NOT a
-        rejuv (never waste the rare rejuv on a one-stat deficit).
-      * Only mana is low and a covering mana potion sits on the belt -> mana.
-      * Non-critical: heal and mana fire independently at their thresholds."""
+      * Both stats in the rejuv range -> rejuv; without one on the belt, drink
+        heal AND mana (anything that is there rather than nothing).
+      * Only HP is low -> a covering heal, else a rejuv, else ANY heal on a
+        managed column even if it cannot fully cover (a potion sitting in the
+        "wrong" slot is still drunk, never wasted).
+      * Only mana is low -> the mana equivalent.
+      * Non-critical: heal and mana fire independently at their thresholds.
+    When the belt is unreadable the plan behaves like the plain tier (rejuv
+    wins if critical, heal/mana at their thresholds); the watcher presses the
+    action's fallback key since no column can be picked."""
     acts: list[dict] = []
+    missing: list[str] = []
     hp_critical = hp_percent <= rejuv_life
     mp_critical = mana_percent < rejuv_mana
+    both_reason = f"HP {hp_percent}% / MP {mana_percent}%"
+
+    def act(kind: str, deficit: int, max_value: int, reason: str) -> None:
+        acts.append({"action": kind, "kind": kind, "deficit": deficit,
+                     "max_value": max_value, "reason": reason})
+
+    if not getattr(pc, "ok", False):
+        # Belt unreadable: decide like the plain tier.  Any presence/coverage
+        # check would read as "empty", so the fallback key path takes over.
+        if hp_critical or mp_critical:
+            act("rejuv", max(hp_def, mp_def), max(max_hp, max_mana), both_reason)
+        else:
+            if hp_percent <= heal_at:
+                act("heal", hp_def, max_hp, f"HP {hp_percent}%")
+            if mana_percent <= mana_at:
+                act("mana", mp_def, max_mana, f"MP {mana_percent}%")
+        return acts, missing
+
+    allowed = _allowed_for(managed)
+
+    def critical_one(kind: str, deficit: int, max_value: int, reason: str) -> None:
+        """One stat is critical: covering specific potion, else rejuv, else any
+        specific potion (even under-strength), else report it as missing."""
+        if _belt_covering(kind, deficit, max_value, pc, allowed):
+            act(kind, deficit, max_value, reason)
+        elif _belt_has_kind("rejuv", pc, managed):
+            act("rejuv", max(hp_def, mp_def), max(max_hp, max_mana), both_reason)
+        elif _belt_has_kind(kind, pc, managed):
+            act(kind, deficit, max_value, reason)
+        else:
+            missing.append(kind)
 
     if hp_critical or mp_critical:
         if hp_critical and not mp_critical:
-            allowed = _allowed_for(managed)
-            if _belt_covering("heal", hp_def, max_hp, pc, allowed):
-                acts.append({"action": "heal", "kind": "heal", "deficit": hp_def,
-                             "max_value": max_hp, "reason": f"HP {hp_percent}%"})
-            else:
-                acts.append({"action": "rejuv", "kind": "rejuv",
-                             "deficit": max(hp_def, mp_def),
-                             "max_value": max(max_hp, max_mana),
-                             "reason": f"HP {hp_percent}% / MP {mana_percent}%"})
+            critical_one("heal", hp_def, max_hp, f"HP {hp_percent}%")
         elif mp_critical and not hp_critical:
-            allowed = _allowed_for(managed)
-            if _belt_covering("mana", mp_def, max_mana, pc, allowed):
-                acts.append({"action": "mana", "kind": "mana", "deficit": mp_def,
-                             "max_value": max_mana, "reason": f"MP {mana_percent}%"})
-            else:
-                acts.append({"action": "rejuv", "kind": "rejuv",
-                             "deficit": max(hp_def, mp_def),
-                             "max_value": max(max_hp, max_mana),
-                             "reason": f"HP {hp_percent}% / MP {mana_percent}%"})
+            critical_one("mana", mp_def, max_mana, f"MP {mana_percent}%")
         else:
-            acts.append({"action": "rejuv", "kind": "rejuv",
-                         "deficit": max(hp_def, mp_def),
-                         "max_value": max(max_hp, max_mana),
-                         "reason": f"HP {hp_percent}% / MP {mana_percent}%"})
+            if _belt_has_kind("rejuv", pc, managed):
+                act("rejuv", max(hp_def, mp_def), max(max_hp, max_mana), both_reason)
+            else:
+                fired = False
+                for kind, deficit, max_value in (("heal", hp_def, max_hp),
+                                                 ("mana", mp_def, max_mana)):
+                    if _belt_has_kind(kind, pc, managed):
+                        act(kind, deficit, max_value, both_reason)
+                        fired = True
+                if not fired:
+                    missing.append("rejuv")
     else:
         if hp_percent <= heal_at:
-            acts.append({"action": "heal", "kind": "heal", "deficit": hp_def,
-                         "max_value": max_hp, "reason": f"HP {hp_percent}%"})
+            act("heal", hp_def, max_hp, f"HP {hp_percent}%")
         if mana_percent <= mana_at:
-            acts.append({"action": "mana", "kind": "mana", "deficit": mp_def,
-                         "max_value": max_mana, "reason": f"MP {mana_percent}%"})
+            act("mana", mp_def, max_mana, f"MP {mana_percent}%")
 
-    missing = [a["kind"] for a in acts
-               if a["kind"] in REFILLABLE_KINDS and not _belt_has_kind(a["kind"], pc, managed)]
     return acts, missing
+
+
+def plan_moves(belt_content: dict, layout: dict, belt_empty: list,
+               belt_rows: int | None = None) -> list[dict]:
+    """Relocate potions sitting in the wrong belt column (smart tier).
+
+    ``belt_content`` maps belt slot X -> potion kind.  A refillable potion is
+    "misplaced" when its own column prefers a different kind (per-slot layout
+    first, then the dominant kind already in the column).  When a column that
+    wants this potion's kind has an empty slot, the potion is moved there —
+    a two-click move (pick it up, drop it into the empty slot), so the engine
+    never has to guess where a dragged-in potion belongs.
+
+    Returns one dict per move: ``{"action": "move", "from", "to", "kind"}``.
+    The watcher executes one move per tick against fresh belt data, so the plan
+    only ever needs to be correct for the next single move."""
+    cols = len(m.BELT_COLUMN_KEYS)
+    content = {int(s): k for s, k in (belt_content or {}).items()
+               if isinstance(s, int) and s >= 0 and k in REFILLABLE_KINDS}
+    if not content:
+        return []
+
+    def column_desired(c: int) -> str | None:
+        # A layout pin anywhere in the column beats the column's dominant kind.
+        for slot in range(c, 16, cols):
+            kind = (layout or {}).get(slot)
+            if kind in REFILLABLE_KINDS:
+                return kind
+        kinds = [k for s, k in content.items() if s % cols == c]
+        return Counter(kinds).most_common(1)[0][0] if kinds else None
+
+    empty_by_col: dict[int, list] = {}
+    for s in (belt_empty or []):
+        if isinstance(s, int) and s >= 0:
+            empty_by_col.setdefault(s % cols, []).append(s)
+
+    moves: list[dict] = []
+    for slot in sorted(content):
+        kind = content[slot]
+        own_col = slot % cols
+        if column_desired(own_col) == kind:
+            continue
+        for c in range(cols):
+            if c == own_col or not empty_by_col.get(c):
+                continue
+            if column_desired(c) != kind:
+                continue
+            target = min(empty_by_col[c])
+            empty_by_col[c].remove(target)
+            moves.append({"action": "move", "from": slot, "to": target, "kind": kind})
+            break
+    return moves
 
 
 def desired_kind_for_slot(slot_x: int, layout: dict, belt_content: dict) -> str | None:

@@ -1,18 +1,29 @@
-"""Global arm/disarm hotkey via the native Win32 RegisterHotKey API.
+"""Global hotkey (enable/disable toggle, calibration capture) via Win32.
 
 A hidden message-only window owns the hotkey and a background thread runs the
 message loop, so the toggle keeps working while the game window has focus (the
 tool's own window does not need keyboard focus).  Opt-in only: an unparseable or
 already-registered hotkey logs an error and the app keeps running without it.
 Pure ctypes - no third-party packages.
+
+Each listener registers its OWN window class name (a process-global namespace),
+so several listeners (the toggle hotkey + an F8 calibration listener) can exist
+at once without the second one's RegisterClassW failing with "class already
+exists" - which is what made the toggle report "failed (in use?)" no matter what
+combo was picked.
 """
 
 from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes as wt
+import itertools
 import threading
 from typing import Callable, Optional
+
+# Unique suffix per listener so RegisterClassW never collides with another
+# live listener's class (RegisterClassW names are process-global).
+_CLASS_COUNTER = itertools.count(1)
 
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
@@ -165,6 +176,10 @@ class HotkeyListener:
         self._lock = threading.Lock()
         self._ready = threading.Event()
         self._result: Optional[bool] = None
+        # One class per instance: RegisterClassW class names are process-global,
+        # and a stale class registered by an older (still-alive) listener would
+        # otherwise make every later registration fail.
+        self._class_name = f"D2RAutoPotionHotkey{next(_CLASS_COUNTER)}"
 
     def start(self) -> bool:
         """Register the hotkey and start the message loop.  Idempotent."""
@@ -211,7 +226,7 @@ class HotkeyListener:
                 self._ready.set()
                 return
             hwnd = user32.CreateWindowExW(
-                0, "D2RAutoPotionHotkey", "d2r-autopotion-hotkey", 0,
+                0, self._class_name, "d2r-autopotion-hotkey", 0,
                 0, 0, 0, 0, None, None, kernel32.GetModuleHandleW(None), None)
             if not hwnd:
                 self._result = False
@@ -250,5 +265,5 @@ class HotkeyListener:
         wc = _WNDCLASS()
         wc.lpfnWndProc = self._wndproc
         wc.hInstance = kernel32.GetModuleHandleW(None)
-        wc.lpszClassName = "D2RAutoPotionHotkey"
+        wc.lpszClassName = self._class_name
         return wc

@@ -65,6 +65,33 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Goals / tasks
 
+- **Done (v1.9.0)**: "arm/disarm" → "enable/disable" wording everywhere (UI
+  button ENABLED/DISABLED, help text, logs, docs); global hotkey is a single
+  click-to-capture button next to the enable toggle on the top bar (Esc/Delete
+  clears; status shows active/failed); per-column belt hotkeys editable next to
+  the managed checkboxes (`config.belt_keys` + `belt_key()`/`set_belt_key()`/
+  `belt_keys_map()`; watcher `_use` and `KeySender._fallback_key` honour the
+  rebinds); **belt refill actually works** — root causes were the hotkey
+  window-class collision (`ERROR_CLASS_ALREADY_EXISTS` between the toggle and
+  F8 listeners, fixed by a unique window class per `HotkeyListener` instance)
+  and a one-click refill that never dropped the potion into the belt (now two
+  clicks: pick up + drop into the target belt slot); refill also relocates
+  potions in the wrong column via new pure `refill.plan_moves()` (watcher
+  executes one move per tick, filtered to managed source+target columns, needs
+  both inventory AND belt click grids calibrated — new
+  `belt_refill_mapping()`/`set_belt_refill_mapping()`/`clear_belt_refill_mapping()`
+  + `belt_calibrated/belt_cell/belt_origin_x/belt_origin_y` config, belt grid
+  row convention = memory row 0 is the UI bottom row); `plan_consume` rework —
+  a critical stat drinks ANY present potion of the wanted kind (even
+  under-strength, "wrong slot is never wasted"), both-critical with no rejuv
+  drinks heal+mana present, `missing` only reports kinds genuinely absent;
+  `GameReader.belt_items()` added; Keys-tab titles/descriptions rewritten;
+  version 1.9.0.  **106 tests green**; compileall + headless UI smoke pass;
+  version bumped; CHANGELOG/README/agents.md updated.
+- **Deferred (known)**: the smart tier's belt/inventory reads, the two-click
+  refill/move, and the merc auto-potion path still need a live in-game
+  end-to-end check (unit-tested only; runtime clicks/keypresses are never
+  exercised during dev).
 - **Done (v1.8.0)**: Keys tab reworked — per-potion key bindings removed
   entirely (the app drinks via the belt's own Q/W/E/R hotkeys and reads each
   slot to see which potion it holds; the managed-column checkboxes ARE the
@@ -139,6 +166,7 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Build state
 
+- Version `1.9.0` — **working belt refill + editable belt hotkeys + one-button global hotkey + "arm" wording gone**.  Belt refill: root causes were the hotkey window-class collision (`ERROR_CLASS_ALREADY_EXISTS` — every `HotkeyListener` now uses a unique class name) and a one-click refill that never dropped the potion (now two clicks).  Refill also relocates wrong-column potions (`refill.plan_moves()`, executed one move per tick, managed-column filtered) and needs BOTH the inventory and belt click grids calibrated (new `belt_refill_mapping()` accessors + `belt_calibrated/belt_cell/belt_origin_x/belt_origin_y`; belt calibration samples use UI-row = (rows-1)-memory_row; belt slot screen row is the same formula in `watcher._belt_slot_pos`).  `plan_consume` rework: critical stats drink ANY present potion of the wanted kind (under-strength included), both-critical-without-rejuv drinks heal+mana present, `missing` only for genuinely-absent kinds.  Belt hotkeys: `config.belt_keys` + `belt_key()`/`set_belt_key()`/`belt_keys_map()` (Esc/Delete/unresolvable → default letter); watcher `_use` presses `config.belt_key(column.index)`; `KeySender._fallback_key` honours rebinds.  Global hotkey: single topbar button (click, press combo, Esc clears), status active/failed.  "Arm/Armed" renamed to enable/disable in UI/logs/docs.  `GameReader.belt_items()` added; Keys-tab titles/descriptions rewritten.  Test suite: **106 tests green**; compileall + headless UI smoke pass; smart-tier refill/moves and the merc path still need a live in-game end-to-end check (deferred).
 - Version `1.8.0` — **Keys tab rework: no per-potion bindings, configurable feed-to-merc modifier, belt mix removed**.  Belt hotkeys ARE the managed columns (Q/W/E/R checkboxes; any managed column can serve any potion type since the slot's content is read each tick).  Merc actions press the belt key + a user-pickable modifier (`behavior["merc_modifier"]`, default Shift — D2R's feed-merc binding).  Belt mix (ratio) hidden from the UI and dropped from the smart refill chain (`desired_kind_for_slot`: layout → column-family → None; `plan_layout_refill`: that → last-drunk kind → any).  `plan_consume`/`_allowed_for` no longer take `bound`; watcher `_pick` uses all managed columns; `config.key()`/`keys_for()` removed; `d2r.keys.FALLBACK_KEYS` (heal Q / mana W / rejuv E, merc same + modifier) covers unreadable-belt presses.  Test suite: **95 tests green**; compileall + headless UI smoke pass; KeySender modifier resolution + fallback sanity-verified.
 - Version `1.7.0` — **grade-aware stacking + trimmed Triggers tab + real merc/player maxes**.  Same-or-higher grade potions may be drunk once the in-effect potion is half consumed (`_effective_cooldown(action, candidate_grade)` → `duration*0.5`); weaker/unknown grades wait `duration * potion_margin()`; rejuv uses the fixed 1.0s gate; config cooldowns only fall back while the belt potion is unknown.  `_pick` now returns a `BeltColumn` (or False=skip / None=plain-key fallback) and `_act` does the gating, so `_ready`/`_effective_cooldown` take the candidate grade.  Triggers tab: potion-values table and class dropdown removed (class auto-detected per snapshot), Safety-margin slider kept with a hint that only describes the slider.  Rejuv defaults 40→25 (`rejuv_potion_at_life`/`_mana`).  Merc true max now from the stats-list item block (`STATSLIST_ITEM_STAT_PTR=0xA8`/`COUNT=0xB0`) — live-verified 199/199 at full vs the base 189 — and the UTF-16 name read at `UNIT_OFFSET_NAME=0x2C` is removed (that offset is not a name; hireling names are a UI resource string; merc is labelled by act-based type).  Player max HP/MP uses `_track_max` (shrinks to the base stat when at/over it, grows while damaged).  Test suite: **95 tests green**; compileall + headless UI smoke pass; live probe (pid 25000) confirms merc 199/199 + empty name + player 303/303.
 - Version `1.5.0` (previous). Test suite: 84 tests green (v1.4.0 added `belt_rows_for`,

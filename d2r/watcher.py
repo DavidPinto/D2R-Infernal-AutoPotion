@@ -210,7 +210,7 @@ class PotionWatcher:
         self.running = False
 
     def _should_act(self, snap: m.PlayerSnapshot) -> bool:
-        """Gate: armed, in a live game, player alive, and no blocking menu open."""
+        """Gate: enabled, in a live game, player alive, and no blocking menu open."""
         if not self.config.enabled:
             return False
         if not snap.in_game or not snap.alive:
@@ -360,7 +360,7 @@ class PotionWatcher:
              column: m.BeltColumn | None = None) -> None:
         """Press the key for 'action' (a specific belt column when given) and log
         the outcome (success or UIPI-block)."""
-        key = m.BELT_COLUMN_KEYS[column.index] if column is not None else None
+        key = self.config.belt_key(column.index) if column is not None else None
         ok = self.sender.press(action, key=key)
         now = time.monotonic()
         self._last_used[action] = now
@@ -393,22 +393,34 @@ class PotionWatcher:
             self._emit("info", message, snap)
 
     def _refill_if_open(self, snap: m.PlayerSnapshot) -> None:
-        """Belt refill: while the inventory panel is open, click one matching
-        inventory potion per interval into the first empty managed belt slot.
+        """Belt refill: while the inventory panel is open, move one potion per
+        interval — either relocate a potion sitting in the wrong column, or
+        click a matching inventory potion into an empty managed belt slot.
 
-        Plain tier restocks whatever family was last drunk; smart tier follows
-        the per-slot layout + ratio plan.  Only runs when the game window is
-        foreground so the click lands on the game, never on another app."""
+        Each step is TWO clicks: pick the potion up, then drop it into the
+        target belt slot (a single click only lifts the potion onto the cursor
+        — that is why refills used to never actually happen).  Smart tier
+        follows the per-slot layout + column-family plan; plain tier restocks
+        whatever family was last drunk.  Only runs when the game window is
+        foreground so the clicks land on the game, never on another app."""
         cfg = self.config
         if not cfg.refill_enabled():
             return
         if not snap.in_game or "Inventory" not in snap.open_menu_names:
             return
-        mapping = cfg.refill_mapping()
-        if not mapping.get("calibrated"):
+        inv_map = cfg.refill_mapping()
+        belt_map = cfg.belt_refill_mapping()
+        if not inv_map.get("calibrated") or not belt_map.get("calibrated"):
+            missing = []
+            if not inv_map.get("calibrated"):
+                missing.append("inventory")
+            if not belt_map.get("calibrated"):
+                missing.append("belt panel")
             self._warn_once(
                 "refill-not-calibrated",
-                "Belt refill is enabled but click positions are not calibrated "
+                "Belt refill is enabled but the "
+                + (" and ".join(missing))
+                + " click position is not calibrated "
                 "(Keys tab > Belt refill > Calibrate).", snap)
             return
         now = time.monotonic()
@@ -422,33 +434,77 @@ class PotionWatcher:
         hwnd = find_window_for_pid(proc.pid)
         if not hwnd:
             return
+        rect = input_mod.window_rect(hwnd)
+        if not rect:
+            return
         pc = snap.potion_counts
         if not pc.ok:
             return
         managed = cfg.managed_indices()
-        empty = [x for x in pc.belt_empty if (x % len(m.BELT_COLUMN_KEYS)) in managed]
+        cols = len(m.BELT_COLUMN_KEYS)
+        empty = [x for x in pc.belt_empty if (x % cols) in managed]
         if not empty:
             return
         if self.config.smart_enabled():
-            plan = refill_mod.plan_layout_refill(
-                empty, pc.belt_slots, self.reader.inventory_potions(),
-                self.config.belt_layout(), last_kind=self._last_kind or None)
+            moves = refill_mod.plan_moves(
+                pc.belt_slots, self.config.belt_layout(), pc.belt_empty)
+            moves = [mv for mv in moves
+                     if (mv["from"] % cols) in managed and (mv["to"] % cols) in managed]
+            if moves:
+                step = moves[0]
+            else:
+                plan = refill_mod.plan_layout_refill(
+                    empty, pc.belt_slots, self.reader.inventory_potions(),
+                    self.config.belt_layout(), last_kind=self._last_kind or None)
+                if not plan:
+                    return
+                step = {"action": "refill", "slot": plan[0]["slot"],
+                        "potion": plan[0]["potion"]}
         else:
             plan = refill_mod.plan_refills(empty, self.reader.inventory_potions(),
                                            last_kind=self._last_kind or None)
-        if not plan:
-            return
-        choice = plan[0]
-        potion = choice["potion"]
-        rect = input_mod.window_rect(hwnd)
-        if not rect:
-            return
-        cell = float(mapping.get("cell", 29.0))
-        sx = rect[0] + float(mapping["origin_x"]) + (float(potion["x"]) + 0.5) * cell
-        sy = rect[1] + float(mapping["origin_y"]) + (float(potion["y"]) + 0.5) * cell
-        ok = input_mod.click_at(sx, sy)
+            if not plan:
+                return
+            step = {"action": "refill", "slot": plan[0]["slot"],
+                    "potion": plan[0]["potion"]}
+        self._exec_refill_step(rect, step, inv_map, belt_map, snap)
         self._refill_last = now
-        if ok:
-            self._emit("info", f"Refill: clicked a {potion['kind']} potion to the belt.", snap)
+
+    def _belt_slot_pos(self, rect, slot: int, belt_map: dict, rows: int):
+        """Screen (x, y) of the centre of belt ``slot`` for a calibrated belt
+        panel.  Slot X = memory row * 4 + column; the UI draws row 0 on TOP,
+        so the screen row is ``(rows - 1) - memory_row``."""
+        cols = len(m.BELT_COLUMN_KEYS)
+        col = slot % cols
+        ui_row = max(0, int(rows) - 1) - (slot // cols)
+        cell = float(belt_map.get("cell", 29.0))
+        return (rect[0] + float(belt_map["origin_x"]) + (col + 0.5) * cell,
+                rect[1] + float(belt_map["origin_y"]) + (ui_row + 0.5) * cell)
+
+    def _exec_refill_step(self, rect, step: dict, inv_map: dict, belt_map: dict,
+                          snap: m.PlayerSnapshot) -> None:
+        """Execute one refill/move step: two clicks (pickup, then drop)."""
+        rows = snap.potion_counts.belt_rows
+        if step.get("action") == "move":
+            fx, fy = self._belt_slot_pos(rect, step["from"], belt_map, rows)
+            tx, ty = self._belt_slot_pos(rect, step["to"], belt_map, rows)
+            first = input_mod.click_at(fx, fy)
+            second = input_mod.click_at(tx, ty) if first else False
+            if first and second:
+                self._emit("info", f"Refill: moved a {step['kind']} potion to the correct column.", snap)
+            else:
+                self._emit("error", "Belt move click failed (SendInput blocked or window lost focus).", snap)
+            return
+        potion = step["potion"]
+        cell = float(inv_map.get("cell", 29.0))
+        sx = rect[0] + float(inv_map["origin_x"]) + (float(potion["x"]) + 0.5) * cell
+        sy = rect[1] + float(inv_map["origin_y"]) + (float(potion["y"]) + 0.5) * cell
+        first = input_mod.click_at(sx, sy)
+        second = False
+        if first:
+            tx, ty = self._belt_slot_pos(rect, step["slot"], belt_map, rows)
+            second = input_mod.click_at(tx, ty)
+        if first and second:
+            self._emit("info", f"Refill: clicked a {potion['kind']} potion into the belt.", snap)
         else:
             self._emit("error", "Belt refill click failed (SendInput blocked or window lost focus).", snap)

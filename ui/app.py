@@ -1,7 +1,7 @@
 """CustomTkinter UI for the D2R Infernal Auto Potion tool.
 
 Tabs:
-  Dashboard   - live HP / Mana / Merc bars, character info, arm/disarm toggle
+  Dashboard   - live HP / Mana / Merc bars, character info, enable/disable toggle
   Triggers    - thresholds + real potion timing/values + safety margin
    Keys        - belt columns, feed-to-merc modifier, refill, belt plan + behaviour
   Calibrate   - teach the app your build's potion txtFileNo codes (per version/mods)
@@ -25,7 +25,7 @@ from d2r.watcher import PotionWatcher
 from d2r.keys import VK
 from d2r.log import EventLog
 from d2r.hotkey import HotkeyListener, parse_hotkey, spec_for
-from d2r.hotkey import mod_from_keysym as hotkey_mod_from_keysym
+from d2r.hotkey import keysym_to_key_name, mod_from_keysym as hotkey_mod_from_keysym
 from ui import widgets as w
 
 ACCENT = "#2f80ed"
@@ -113,6 +113,8 @@ class MainApp(ctk.CTk):
         self.watcher: PotionWatcher | None = None
         self.connected = False
         self._capturing: str | None = None
+        self._capture_col: str | None = None
+        self._held_mods: set[str] = set()
         self._last_connect_attempt = 0.0
         self._last_discover = 0.0
         self._shown_errors: set[str] = set()
@@ -158,6 +160,15 @@ class MainApp(ctk.CTk):
         self._sync_enable_button()
         self.enable_btn.pack(side="right", padx=(0, 6))
 
+        self._hotkey_state = ctk.CTkLabel(bar, text="", font=ctk.CTkFont(size=11),
+                                          text_color="gray60")
+        self._hotkey_state.pack(side="right", padx=(0, 8))
+        self._hotkey_btn = ctk.CTkButton(bar, text="Hotkey: off", width=150, height=34,
+                                         fg_color="#3a3a3a", hover_color="#4a4a4a",
+                                         font=ctk.CTkFont(size=11),
+                                         command=self._toggle_hotkey_capture)
+        self._hotkey_btn.pack(side="right", padx=(0, 8))
+
         self._build_quickbar()
 
     def _build_quickbar(self):
@@ -190,20 +201,20 @@ class MainApp(ctk.CTk):
 
     def _sync_enable_button(self):
         if self.config.enabled:
-            self.enable_btn.configure(text="● ARMED", fg_color=GOOD, hover_color="#1e8449")
+            self.enable_btn.configure(text="● ENABLED", fg_color=GOOD, hover_color="#1e8449")
         else:
             self.enable_btn.configure(text="DISABLED", fg_color=DANGER, hover_color="#c0392b")
 
     def _toggle_enabled(self):
-        # Do not allow arming without a working connection.
+        # Do not allow enabling without a working connection.
         if not self.connected or (self.reader and not self.reader.offsets.ok):
             self.on_event(m.GameEvent(kind="error",
-                          message="Cannot arm: not connected / offsets unresolved. See Diagnostics."))
+                          message="Cannot enable: not connected / offsets unresolved. See Diagnostics."))
             return
         self.config.enabled = not self.config.enabled
         self._sync_enable_button()
         self.config.save()
-        state = "armed" if self.config.enabled else "disarmed"
+        state = "enabled" if self.config.enabled else "disabled"
         self.on_event(m.GameEvent(kind="info", message=f"Auto-potion {state}."))
 
     # -------------------------------------------------------------- tabs
@@ -274,7 +285,7 @@ class MainApp(ctk.CTk):
 
         help_text = ("The tool watches your HP / Mana / Mercenary and presses the belt keys "
                      "you configured. Make sure your potions are placed in the matching belt "
-                     "slots (Triggers → Keys). Arm with the button top-right.")
+                     "slots (Triggers → Keys). Enable with the button top-right.")
         w.hint(parent, help_text).pack(anchor="w", padx=12, pady=(14, 0))
 
     def _update_dashboard(self, snap: m.PlayerSnapshot):
@@ -484,22 +495,35 @@ class MainApp(ctk.CTk):
         body = scroll
 
         w.heading(body, "Belt columns & hotkeys").pack(anchor="w", padx=12, pady=(10, 4))
-        w.hint(body, "The app drinks by pressing your belt's own hotkeys — "
-                     "Q / W / E / R in D2R.  It reads each belt slot to see which "
-                     "potion it holds, so there is nothing else to bind.").pack(
+        w.hint(body, "The app drinks by pressing your belt's hotkeys and reads each "
+                     "slot to see which potion it holds.  Tick a column to let the "
+                     "app drink from it and refill it; untick to keep the app "
+                     "entirely off it (the game's own inventory button and menus "
+                     "are never touched).").pack(
                          anchor="w", padx=12, pady=(0, 6))
         man = ctk.CTkFrame(body, fg_color="transparent")
-        man.pack(anchor="w", padx=12, pady=(0, 4))
+        man.pack(anchor="w", padx=12, pady=(0, 2))
         self._managed_boxes: dict[str, ctk.CTkCheckBox] = {}
+        self._belt_key_btns: dict[str, ctk.CTkButton] = {}
         for col in m.BELT_COLUMN_KEYS:
             box = ctk.CTkCheckBox(man, text=col, command=self._on_managed_toggle)
-            box.pack(side="left", padx=(0, 14))
+            box.pack(side="left", padx=(0, 4))
             self._managed_boxes[col] = box
+            btn = ctk.CTkButton(man, text="Q", width=46, height=26, fg_color="#333",
+                                hover_color="#4a4a4a", font=ctk.CTkFont(size=11),
+                                command=lambda c=col: self._on_belt_key_capture(c))
+            btn.pack(side="left", padx=(0, 18))
+            self._belt_key_btns[col] = btn
         self._refresh_managed()
-        w.hint(body, "Tick a column to let the app drink from it and refill it.  "
-                     "Untick a column to keep the app entirely off it — the game's "
-                     "own inventory button (I) and menus are never touched.").pack(
-                         anchor="w", padx=12, pady=(0, 10))
+        self._refresh_belt_keys()
+        self._belt_keys_hint = ctk.CTkLabel(body, text="", font=ctk.CTkFont(size=11),
+                                            text_color=WARN, wraplength=760, justify="left")
+        self._belt_keys_hint.pack(anchor="w", padx=12, pady=(0, 10))
+        w.hint(body, "The button next to each column is the actual in-game key bound "
+                     "to that belt column.  Click it and press a key to rebind "
+                     "(D2R lets you remap Q/W/E/R); Esc restores the default.  Set "
+                     "these to match the game so a wrong-column potion is never "
+                     "drunk by mistake.").pack(anchor="w", padx=12, pady=(0, 10))
 
         w.heading(body, "Mercenary potion modifier").pack(anchor="w", padx=12, pady=(4, 4))
         merc = ctk.CTkFrame(body, fg_color="transparent")
@@ -516,12 +540,19 @@ class MainApp(ctk.CTk):
                      "same feed-merc binding D2R uses.  Set it to whatever your "
                      "in-game feed-merc key is.").pack(anchor="w", padx=12, pady=(0, 10))
 
-        w.heading(body, "Belt refill from inventory").pack(anchor="w", padx=12, pady=(4, 4))
+        w.heading(body, "Belt refill & reordering").pack(anchor="w", padx=12, pady=(4, 4))
         self._refill_switch = ctk.CTkSwitch(
             body, text="Refill the belt from your inventory while the inventory panel is open",
             command=self._on_refill_toggle)
         self._refill_switch.pack(anchor="w", padx=12, pady=4)
         self._refill_switch.select() if self.config.refill_enabled() else self._refill_switch.deselect()
+        w.hint(body, "With this on, the app fixes your belt while you have the "
+                     "inventory panel open: an empty managed slot gets a matching "
+                     "potion clicked into it, and a potion sitting in the wrong "
+                     "column gets moved to the right one.  Every step is two "
+                     "clicks (pick it up, drop it in the slot), so the game window "
+                     "must be the foreground window — it is never touched "
+                     "otherwise.").pack(anchor="w", padx=12, pady=(0, 6))
 
         cal = ctk.CTkFrame(body, fg_color="transparent")
         cal.pack(anchor="w", padx=12, pady=(8, 0), fill="x")
@@ -550,10 +581,11 @@ class MainApp(ctk.CTk):
             body, text="Smart potion use: choose the best potion across the managed belt",
             command=self._on_smart_toggle)
         self._smart_switch.pack(anchor="w", padx=12, pady=4)
-        w.hint(body, "Each cell says what the belt should hold in that slot "
-                     "(Any = no preference).  Top row = the belt's top row.  When "
-                     "a slot is empty the refill clicks the best inventory potion "
-                     "for it.").pack(anchor="w", padx=12, pady=(0, 6))
+        w.hint(body, "Each cell pins what the belt should hold in that slot "
+                     "(Any = no preference).  Top row = the belt's top row.  A "
+                     "potion sitting in a column that prefers a different kind is "
+                     "moved into the right column, and an empty slot is refilled "
+                     "with the best matching inventory potion.").pack(anchor="w", padx=12, pady=(0, 6))
         grid = ctk.CTkFrame(body, fg_color="transparent")
         grid.pack(anchor="w", padx=12, pady=(0, 4))
         self._layout_menus: dict[int, ctk.CTkOptionMenu] = {}
@@ -568,7 +600,7 @@ class MainApp(ctk.CTk):
                 self._layout_menus[slot_x] = menu
         self._refresh_belt_plan()
 
-        w.heading(body, "Behaviour").pack(anchor="w", padx=12, pady=(4, 4))
+        w.heading(body, "General options").pack(anchor="w", padx=12, pady=(4, 4))
         self._focus_switch = ctk.CTkSwitch(body, text="Auto-focus game window before pressing keys",
                                           command=self._on_focus)
         self._focus_switch.pack(anchor="w", padx=12, pady=4)
@@ -590,28 +622,6 @@ class MainApp(ctk.CTk):
             float(self.config.behavior.get("poll_interval_ms", 150)),
             lambda v: self._on_poll_interval(v), step=50, fmt="{:.0f} ms")
         self._poll_frame.pack(fill="x", padx=12, pady=(8, 2))
-
-        # Global arm/disarm hotkey (preset quick-pick + custom capture).
-        hot = ctk.CTkFrame(body, fg_color="transparent")
-        hot.pack(anchor="w", padx=12, pady=(8, 0), fill="x")
-        ctk.CTkLabel(hot, text="Global arm/disarm hotkey",
-                     font=ctk.CTkFont(size=12)).pack(side="left")
-        self._hotkey_preset = ctk.CTkOptionMenu(hot, values=HOTKEY_PRESETS, width=150, height=28)
-        self._hotkey_preset.pack(side="left", padx=(10, 0))
-        self._hotkey_preset.set(self.config.behavior.get("toggle_hotkey", "")
-                                or "Disabled")
-        self._hotkey_preset.configure(command=self._on_hotkey)
-        self._hotkey_bind_btn = ctk.CTkButton(hot, text="Bind custom…", width=100, height=28,
-                                              command=self._start_hotkey_capture)
-        self._hotkey_bind_btn.pack(side="left", padx=(6, 0))
-        self._hotkey_off_btn = ctk.CTkButton(hot, text="Off", width=44, height=28,
-                                             fg_color="#7a4a4a", hover_color="#8c5555",
-                                             command=self._disable_hotkey)
-        self._hotkey_off_btn.pack(side="left", padx=(6, 0))
-        self._hotkey_state = ctk.CTkLabel(hot, text="", font=ctk.CTkFont(size=11),
-                                          text_color=GOOD)
-        self._hotkey_state.pack(side="left", padx=(8, 0))
-        self._hotkey_state.bind("<Button-1>", lambda e: self._refresh_hotkey())
 
         ctk.CTkButton(body, text="Reset to defaults", fg_color="#444",
                       hover_color="#555", command=self._reset_keys).pack(anchor="w", padx=12, pady=14)
@@ -689,15 +699,30 @@ class MainApp(ctk.CTk):
 
     def _refresh_refill_status(self):
         mapping = self.config.refill_mapping()
-        if mapping.get("calibrated"):
+        belt = self.config.belt_refill_mapping()
+        inv_ok = mapping.get("calibrated")
+        belt_ok = belt.get("calibrated")
+        if inv_ok and belt_ok:
             self._calib_status.configure(
-                text=f"Calibrated: cell {float(mapping['cell']):.1f}px, origin "
-                     f"({float(mapping['origin_x']):.0f}, {float(mapping['origin_y']):.0f})",
+                text=f"Calibrated: inventory cell {float(mapping['cell']):.1f}px, origin "
+                     f"({float(mapping['origin_x']):.0f}, {float(mapping['origin_y']):.0f})  ·  "
+                     f"belt cell {float(belt['cell']):.1f}px, origin "
+                     f"({float(belt['origin_x']):.0f}, {float(belt['origin_y']):.0f})",
                 text_color=GOOD)
+        elif inv_ok or belt_ok:
+            missing = "belt panel" if inv_ok else "inventory"
+            self._calib_status.configure(
+                text=f"Partially calibrated ({'belt' if inv_ok else 'inventory'} ready). "
+                     f"Still needed: {missing}. While in-game with your inventory open, hover "
+                     f"over a potion and press F8 (twice, on different potions), then "
+                     f"'Finish & save'.",
+                text_color=WARN)
         else:
             self._calib_status.configure(
-                text="Not calibrated yet. While in-game with your inventory open, hover over a "
-                     "potion and press F8 (twice, on different potions), then click 'Finish & save'.",
+                text="Not calibrated yet. While in-game with your inventory open, hover over an "
+                     "inventory potion OR a belt potion and press F8 (twice, on different "
+                     "potion cells), then click 'Finish & save'. Both the inventory page and "
+                     "the belt panel need a known grid.",
                 text_color=WARN)
 
     def _refresh_belt_info(self):
@@ -721,8 +746,10 @@ class MainApp(ctk.CTk):
         self._calib_samples = []
         self._calib_btn.configure(text="Stop capture")
         self._calib_status.configure(
-            text="Capture: open your inventory in-game, hover the mouse over a potion and press F8. "
-                 "Repeat on a different potion, then click 'Finish & save'.", text_color=ACCENT)
+            text="Capture: open your inventory in-game, hover the mouse over an inventory "
+                 "potion OR a potion on your belt, and press F8.  Repeat on different "
+                 "potion cells (inventory and belt each need two), then click "
+                 "'Finish & save'.", text_color=ACCENT)
         try:
             self._calib_hotkey = HotkeyListener(
                 0, VK["F8"], lambda: self.after(0, self._record_calib_sample))
@@ -747,73 +774,134 @@ class MainApp(ctk.CTk):
         unit_id = self.reader.hovered_item_unit()
         if not unit_id:
             self._calib_status.configure(
-                text=f"Sample {len(self._calib_samples)}: nothing hovered. Move the mouse onto an "
-                     "inventory potion and press F8 again.", text_color=WARN)
+                text=f"Sample {len(self._calib_samples)}: nothing hovered. Move the mouse onto "
+                     "an inventory or belt potion and press F8 again.", text_color=WARN)
             return
         potion = next((p for p in self.reader.inventory_potions()
                        if p.get("unit_id") == unit_id), None)
-        if not potion:
+        if potion:
+            hwnd = find_window_for_pid(self.proc.pid)
+            rect = input_mod.window_rect(hwnd) if hwnd else None
+            if not rect:
+                self._calib_status.configure(text="Could not read the game window bounds.", text_color=DANGER)
+                return
+            sx, sy = input_mod.cursor_pos()
+            self._calib_samples.append(
+                ("inv", int(potion["x"]), int(potion["y"]), sx - rect[0], sy - rect[1]))
             self._calib_status.configure(
-                text="Hovered item is not a potion on the inventory page.", text_color=WARN)
+                text=f"Sample {len(self._calib_samples)}: inventory cell ({potion['x']}, {potion['y']}). "
+                     "Press F8 over a different potion (or a belt potion), then 'Finish & save'.",
+                text_color=GOOD)
             return
-        hwnd = find_window_for_pid(self.proc.pid)
-        rect = input_mod.window_rect(hwnd) if hwnd else None
-        if not rect:
-            self._calib_status.configure(text="Could not read the game window bounds.", text_color=DANGER)
+        potion = next((p for p in self.reader.belt_items()
+                       if p.get("unit_id") == unit_id), None)
+        if potion:
+            hwnd = find_window_for_pid(self.proc.pid)
+            rect = input_mod.window_rect(hwnd) if hwnd else None
+            if not rect:
+                self._calib_status.configure(text="Could not read the game window bounds.", text_color=DANGER)
+                return
+            slot = int(potion.get("slot", -1))
+            if slot < 0:
+                self._calib_status.configure(text="Could not read that belt potion's slot.", text_color=WARN)
+                return
+            rows = 1
+            pc = self.watcher.snapshot().potion_counts if self.watcher else m.PotionCounts()
+            if pc.ok:
+                rows = max(1, int(pc.belt_rows))
+            cols = len(m.BELT_COLUMN_KEYS)
+            gx = slot % cols
+            gy = (rows - 1) - (slot // cols)   # belt memory row 0 = UI bottom row
+            sx, sy = input_mod.cursor_pos()
+            self._calib_samples.append(("belt", gx, gy, sx - rect[0], sy - rect[1]))
+            self._calib_status.configure(
+                text=f"Sample {len(self._calib_samples)}: belt slot {slot} (row {gy}, col {gx}). "
+                     "Press F8 over a different potion (or an inventory potion), then "
+                     "'Finish & save'.", text_color=GOOD)
             return
-        sx, sy = input_mod.cursor_pos()
-        self._calib_samples.append(
-            (int(potion["x"]), int(potion["y"]), sx - rect[0], sy - rect[1]))
         self._calib_status.configure(
-            text=f"Sample {len(self._calib_samples)}: grid cell ({potion['x']}, {potion['y']}). "
-                 "Press F8 over a different potion, then 'Finish & save'.", text_color=GOOD)
+            text="Hovered item is not a potion on the inventory page or the belt.", text_color=WARN)
 
     def _finish_calib(self):
         if not self._calib_capture:
             self._calib_status.configure(text="Start a capture first ('Calibrate…').", text_color=WARN)
             return
+        inv_samples = [(gx, gy, sx, sy) for t, gx, gy, sx, sy in self._calib_samples if t == "inv"]
+        belt_samples = [(gx, gy, sx, sy) for t, gx, gy, sx, sy in self._calib_samples if t == "belt"]
+        if not inv_samples and not belt_samples:
+            self._calib_status.configure(
+                text="No samples captured. Hover a potion (inventory or belt) and press F8.",
+                text_color=WARN)
+            return
         existing = self.config.refill_mapping()
         cell = float(existing.get("cell", 29.0)) if existing.get("calibrated") else None
-        solved = m.solve_grid_mapping(self._calib_samples, cell=cell)
-        if not solved:
+        solved = m.solve_grid_mapping(inv_samples, cell=cell) if inv_samples else None
+        if inv_samples and not solved:
             self._calib_status.configure(
-                text="Could not solve the grid. Capture two samples on different potions that are "
-                     "not in the same row and column.", text_color=DANGER)
+                text="Could not solve the inventory grid. Capture two inventory potions that "
+                     "are not in the same row and column.", text_color=DANGER)
             return
-        c, ox, oy = solved
-        self.config.set_refill_mapping(c, ox, oy)
+        belt_existing = self.config.belt_refill_mapping()
+        belt_cell = float(belt_existing.get("cell", 29.0)) if belt_existing.get("calibrated") else None
+        if belt_samples and not belt_cell and solved:
+            belt_cell = solved[0]          # reuse the inventory cell size
+        belt_solved = m.solve_grid_mapping(belt_samples, cell=belt_cell) if belt_samples else None
+        if belt_samples and not belt_solved:
+            self._calib_status.configure(
+                text="Could not solve the belt grid. Capture two belt potions that are not in "
+                     "the same row and column.", text_color=DANGER)
+            return
+        msgs = []
+        if solved:
+            c, ox, oy = solved
+            self.config.set_refill_mapping(c, ox, oy)
+            msgs.append(f"inventory cell {c:.1f}px, origin ({ox:.0f}, {oy:.0f})")
+        if belt_solved:
+            c, ox, oy = belt_solved
+            self.config.set_belt_refill_mapping(c, ox, oy)
+            msgs.append(f"belt cell {c:.1f}px, origin ({ox:.0f}, {oy:.0f})")
         self.config.save()
         self._exit_calib_capture()
         self._calib_status.configure(
-            text=f"Saved: cell {c:.1f}px, origin ({ox:.0f}, {oy:.0f}). Refill is ready.", text_color=GOOD)
+            text="Saved: " + "  |  ".join(msgs) + ". Belt refill is ready.", text_color=GOOD)
 
     def _clear_calib(self):
         if self._calib_capture:
             self._exit_calib_capture()
         self.config.clear_refill_mapping()
+        self.config.clear_belt_refill_mapping()
         self.config.save()
         self._refresh_refill_status()
 
     # ------------------------------------------------------- global hotkey
-    def _on_hotkey(self, value):
-        """User picked a hotkey preset (or Disabled).  Re-register it."""
-        if value == "Disabled":
-            value = ""
-        self.config.behavior["toggle_hotkey"] = value
-        self.config.save()
-        self._refresh_hotkey()
-
-    def _disable_hotkey(self):
-        """Turn the global hotkey off entirely."""
-        self._on_hotkey("Disabled")
-
-    def _start_hotkey_capture(self):
-        """Click-to-bind a custom combo: track held modifiers until a key lands."""
+    def _toggle_hotkey_capture(self):
+        """Grab a new global enable/disable combo (Esc or Delete clears it)."""
         if self._capturing:
+            if self._capturing == "hotkey":
+                self._end_capture()
             return
         self._capturing = "hotkey"
+        self._capture_col = None
         self._held_mods: set[str] = set()
-        self._hotkey_bind_btn.configure(text="Press combo…")
+        self._hotkey_btn.configure(text="Press combo… (Esc clears)")
+        self._hotkey_state.configure(text="", text_color="gray60")
+        self.focus_force()
+        self.bind("<KeyPress>", self._on_hotkey_capture_key)
+        self.bind("<KeyRelease>", self._on_hotkey_capture_release)
+
+    def _on_belt_key_capture(self, col: str):
+        """Grab a new in-game key for one belt column (Esc or Delete resets it)."""
+        if self._capturing:
+            if self._capturing == "belt_key" and self._capture_col == col:
+                self._end_capture()
+            return
+        self._capturing = "belt_key"
+        self._capture_col = col
+        self._held_mods = set()
+        self._belt_key_btns[col].configure(text="press…")
+        self._belt_keys_hint.configure(
+            text=f"Press the in-game key you want for column {col} (Esc restores the default).",
+            text_color=ACCENT)
         self.focus_force()
         self.bind("<KeyPress>", self._on_hotkey_capture_key)
         self.bind("<KeyRelease>", self._on_hotkey_capture_release)
@@ -824,18 +912,40 @@ class MainApp(ctk.CTk):
             self._held_mods.discard(mod)
 
     def _on_hotkey_capture_key(self, event):
-        """Finish a hotkey capture: build 'Ctrl+Alt+F12' from held modifiers."""
-        if self._capturing != "hotkey":
+        """Finish a capture: global combo from held modifiers, or a bare belt key."""
+        if self._capturing is None:
             return
         keysym = getattr(event, "keysym", "")
         mod = hotkey_mod_from_keysym(keysym)
         if mod:
             self._held_mods.add(mod)
             return
-        self.unbind("<KeyPress>")
-        self.unbind("<KeyRelease>")
-        self._capturing = None
-        self._hotkey_bind_btn.configure(text="Bind custom…")
+        if self._capturing == "belt_key":
+            if keysym.lower() in ("escape", "delete"):
+                self.config.set_belt_key(self._capture_col, "")
+                self.config.save()
+                self._emit_log(f"Belt column {self._capture_col} reset to its default key.", "info")
+                self._end_capture()
+                return
+            name = keysym_to_key_name(keysym)
+            if not name:
+                self._belt_keys_hint.configure(text="Unsupported key — try a letter, number, F-key or arrow.", text_color=DANGER)
+                return
+            self.config.set_belt_key(self._capture_col, name)
+            self.config.save()
+            self._emit_log(f"Belt column {self._capture_col} set to {name}.", "info")
+            self._end_capture()
+            return
+        if keysym.lower() in ("escape", "delete"):
+            self.config.behavior["toggle_hotkey"] = ""
+            self.config.save()
+            self._emit_log("Global hotkey cleared.", "info")
+            self._end_capture()
+            self._refresh_hotkey()
+            return
+        if not self._held_mods:
+            self._hotkey_state.configure(text="hold Ctrl/Alt/Shift + a key", text_color=WARN)
+            return
         spec = spec_for(keysym, frozenset(self._held_mods))
         if not spec:
             self._hotkey_state.configure(text="unsupported key", text_color=DANGER)
@@ -843,34 +953,59 @@ class MainApp(ctk.CTk):
         self.config.behavior["toggle_hotkey"] = spec
         self.config.save()
         self._emit_log(f"Global hotkey set to {spec}.", "info")
+        self._end_capture()
         self._refresh_hotkey()
 
-    def _refresh_hotkey(self):
-        """(Re)register the global arm/disarm hotkey from config."""
+    def _end_capture(self):
+        """Stop any active key capture and restore the widgets' labels."""
+        self.unbind("<KeyPress>")
+        self.unbind("<KeyRelease>")
+        mode = self._capturing
+        self._capturing = None
+        self._capture_col = None
+        if mode == "hotkey":
+            self._sync_hotkey_ui()
+        elif mode == "belt_key":
+            self._refresh_belt_keys()
+            self._belt_keys_hint.configure(text="")
+
+    def _sync_hotkey_ui(self):
+        """Push the stored combo onto the topbar hotkey button."""
         spec = self.config.behavior.get("toggle_hotkey", "")
-        self.hotkey = None
+        self._hotkey_btn.configure(text=f"Hotkey: {spec}" if spec else "Hotkey: off")
+
+    def _refresh_hotkey(self):
+        """(Re)register the global enable/disable hotkey from config."""
+        if self.hotkey:
+            self.hotkey.stop()
+            self.hotkey = None
+        self._sync_hotkey_ui()
+        spec = self.config.behavior.get("toggle_hotkey", "")
         parsed = parse_hotkey(spec)
         if not parsed:
-            label = "off" if not spec else f"{spec} (invalid)"
-            self._hotkey_state.configure(text=label, text_color="gray60")
-            self._hotkey_preset.set(spec if spec in HOTKEY_PRESETS
-                                    else ("Disabled" if not spec else "Custom…"))
+            self._hotkey_state.configure(text="" if not spec else "invalid combo",
+                                         text_color="gray60" if not spec else DANGER)
             return
         mods, vk = parsed
         listener = HotkeyListener(mods, vk, self._hotkey_toggle)
         ok = listener.start()
         if ok:
             self.hotkey = listener
-            self._hotkey_state.configure(text=f"{spec} (registered)", text_color=GOOD)
-            self._hotkey_preset.set(spec if spec in HOTKEY_PRESETS else "Custom…")
+            self._hotkey_state.configure(text="active", text_color=GOOD)
             self._emit_log(f"Global hotkey {spec} registered.", "info")
         else:
             self._hotkey_state.configure(text="failed (in use?)", text_color=DANGER)
             self._emit_log(f"Could not register hotkey {spec} (already in use?).", "error")
 
     def _hotkey_toggle(self):
-        """Global-hotkey callback: arm/disarm, marshalled to the main thread."""
+        """Global-hotkey callback: enable/disable, marshalled to the main thread."""
         self.after(0, self._toggle_enabled)
+
+    def _refresh_belt_keys(self):
+        """Push the bound in-game keys onto the per-column buttons."""
+        keys = self.config.belt_keys_map()
+        for i, col in enumerate(m.BELT_COLUMN_KEYS):
+            self._belt_key_btns[col].configure(text=keys[i])
 
     def _reset_keys(self):
         """Restore default behaviour switches, merc modifier, and belt plan."""
@@ -878,13 +1013,14 @@ class MainApp(ctk.CTk):
         self.config.behavior = dict(DEFAULTS["behavior"])
         self.config.layout = dict(DEFAULTS["layout"])
         self.config.ratio = dict(DEFAULTS["ratio"])
+        self.config.belt_keys = dict(DEFAULTS["belt_keys"])
         self._focus_switch.select() if self.config.behavior.get("auto_focus_game", True) else self._focus_switch.deselect()
         self._sound_switch.select() if self.config.behavior.get("sound", True) else self._sound_switch.deselect()
         self._pause_switch.select() if self.config.behavior.get("pause_when_menus_open", True) else self._pause_switch.deselect()
         self._poll_frame.set_value(float(self.config.behavior.get("poll_interval_ms", 150)))
-        self._hotkey_preset.set(self.config.behavior.get("toggle_hotkey", "") or "Disabled")
         self._merc_mod_menu.set(self._merc_mod_label())
         self._refresh_managed()
+        self._refresh_belt_keys()
         self._refresh_belt_plan()
         self._refresh_refill_status()
         self.config.save()
@@ -976,7 +1112,7 @@ class MainApp(ctk.CTk):
 
     def _learn_potion(self, kind: str, anchor_txt: int, anchor_grade: int):
         """Infer the potion family from the anchor code and persist the result
-        into the wizard's combo (auto-active, so the reader re-arms instantly)."""
+        into the wizard's combo (auto-active, so the reader picks it up instantly)."""
         new_entries = m.infer_potion_family(kind, anchor_txt, anchor_grade,
                                             existing=self._active_combo_potion_txts())
         if not new_entries:

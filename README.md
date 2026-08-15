@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit).  It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.7.0` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.9.0` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`.  See
 > [Limitations](#limitations) below.
 
@@ -50,17 +50,21 @@ presses the correct belt keys for you.
 - **Persistent log & session stats.** Every event is appended to
   `config/autopotion.log` (auto-rotated, survives restarts); the Dashboard
   shows per-action potion counts, uptime, and errors for the current session.
-- **Optional global hotkey.** A system-wide toggle (Triggers tab) arms/disarms
-  the watcher from anywhere — even while the game is focused.  Disabled by
-  default.
+- **Optional global hotkey.** A system-wide enable/disable toggle, set from a
+  single button next to the enable/disable toggle on the top bar.  Click it and
+  press a combo (Ctrl/Alt/Shift + a key); Esc clears it.  Works from anywhere —
+  even while the game is focused.  Off by default.
 - **Managed belt columns.** The *Keys* tab lets you uncheck belt columns the app
   is allowed to touch — unchecked columns are never drunk from or refilled, so
   you keep manual control of them (default: all four Q/W/E/R managed).
-- **Automatic belt refill.** While your inventory panel is open, the app can move
-  potions from the inventory into empty managed belt slots (one click per tick,
-  only when the game window is foreground, restocking what was just drunk
-  first).  Click positions are measured once by hovering two inventory potions
-  and pressing F8 — no resolution-specific constants.
+- **Automatic belt refill & reordering.** While your inventory panel is open, the
+  app moves potions around: empty managed belt slots are refilled from the
+  inventory, and a potion sitting in the wrong column is moved to the column
+  that wants it.  Each step is two clicks (pick it up, drop it in the slot),
+  throttled, and only runs when the game window is the foreground window.
+  Click positions are measured once by hovering two potion cells and pressing
+  F8 — both the inventory page and the belt panel need a known grid.  No
+  resolution-specific constants.
 - **Smart potion choice (smart tier).** The watcher decides from the *whole
   managed belt*, not just one column: HP+MP both critical → rejuv; only HP
   low → heal when a heal that fully covers the deficit is on the belt (else
@@ -69,10 +73,11 @@ presses the correct belt keys for you.
 - **Belt plan (per-slot layout).** The *Keys* tab has a 4×4 belt grid — set each
   slot to Any / HP / Mana / Rejuv.  Smart-tier refill fills an empty slot with
   the layout kind, else restocks the kind that already dominates that column,
-  else the family you last drank, else any potion.
+  else the family you last drank, else any potion — and moves a potion that
+  ended up in the wrong column to the column that wants it.
 - **Safe by default.** Pauses while inventory / stash / vendor / menus are open,
   never presses keys outside a live game, tracks Battle Orders when computing
-  HP/MP percentages, and defaults to **disarmed** — you arm it deliberately.
+  HP/MP percentages, and defaults to **disabled** — you enable it deliberately.
 
 ## Requirements
 
@@ -93,7 +98,7 @@ python main.py
 1. Start D2R and enter a character (the memory scan needs a live game).
 2. The status pill turns **green (Connected)** once `D2R.exe` is found.
 3. Tune thresholds on the *Triggers* tab (optional), keys on the *Keys* tab.
-4. Click **DISABLED** (top-right) to arm.  The button turns green (**ARMED**).
+4. Click **DISABLED** (top-right) to enable.  The button turns green (**ENABLED**).
 5. Watch the bars and the log.  A chime plays on each potion use.
 
 `python main.py --version` prints the version and exits.
