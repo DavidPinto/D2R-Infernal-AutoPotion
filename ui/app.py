@@ -505,12 +505,13 @@ class MainApp(ctk.CTk):
         self._managed_boxes: dict[str, ctk.CTkCheckBox] = {}
         self._belt_key_entries: dict[str, ctk.CTkEntry] = {}
         for col in m.BELT_COLUMN_KEYS:
-            box = ctk.CTkCheckBox(man, text=col, command=self._on_managed_toggle)
-            box.pack(side="left", padx=(0, 4))
+            box = ctk.CTkCheckBox(man, text="", width=24, height=24,
+                                  command=self._on_managed_toggle)
+            box.pack(side="left", padx=(0, 2))
             self._managed_boxes[col] = box
-            entry = ctk.CTkEntry(man, width=32, height=26, font=ctk.CTkFont(size=11),
+            entry = ctk.CTkEntry(man, width=30, height=26, font=ctk.CTkFont(size=11),
                                  justify="center")
-            entry.pack(side="left", padx=(0, 10))
+            entry.pack(side="left", padx=(0, 8))
             entry.bind("<Return>", lambda e, c=col: self._on_belt_key_entry(c))
             entry.bind("<FocusOut>", lambda e, c=col: self._on_belt_key_entry(c))
             self._belt_key_entries[col] = entry
