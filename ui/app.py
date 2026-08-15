@@ -991,8 +991,18 @@ class MainApp(ctk.CTk):
         ctk.CTkButton(calib_row, text="Scan belt corners", width=140, height=28,
                       command=self._wizard_scan).pack(side="left", padx=(8, 0))
         self._calib_status = ctk.CTkLabel(scroll, text="", text_color="gray70",
-                                          font=ctk.CTkFont(size=11))
+                                           font=ctk.CTkFont(size=11))
         self._calib_status.pack(anchor="w", padx=12, pady=(2, 6))
+
+        # UI struct calibration (menu detection)
+        w.heading(scroll, "Menu detection calibration").pack(anchor="w", padx=12, pady=(8, 4))
+        ui_calib_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        ui_calib_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
+        ctk.CTkButton(ui_calib_row, text="Calibrate menus (open/close inventory)",
+                      width=280, height=28, command=self._calibrate_ui_struct).pack(side="left")
+        self._ui_calib_status = ctk.CTkLabel(scroll, text="", text_color="gray70",
+                                              font=ctk.CTkFont(size=11))
+        self._ui_calib_status.pack(anchor="w", padx=12, pady=(2, 6))
 
         merc_row = ctk.CTkFrame(scroll, fg_color="transparent")
         merc_row.pack(anchor="w", padx=12, fill="x", pady=(4, 2))
@@ -1153,6 +1163,38 @@ class MainApp(ctk.CTk):
 
     def _set_calib_status(self, text: str):
         self._calib_status.configure(text=text)
+
+    def _calibrate_ui_struct(self):
+        """One-click UI struct calibration: detects live menu flag array.
+
+        User must have NO menus open initially, then OPEN inventory when prompted,
+        then CLOSE it. The app scans module .data for candidate structs and picks
+        the one whose inventory flag (index 0x01) changes.
+        """
+        if not self.connected or not self.reader:
+            self._ui_calib_status.configure(text="Not connected.")
+            return
+        self._ui_calib_status.configure(text="Step 1/3: Close ALL panels (inventory, stash, etc.) — waiting 2s…")
+        self.update_idletasks()
+        # Run calibration in background
+        threading.Thread(target=self._do_ui_calibration, daemon=True).start()
+
+    def _do_ui_calibration(self):
+        try:
+            # Baseline: all menus closed
+            time.sleep(2.0)
+            self.after(0, lambda: self._ui_calib_status.configure(text="Step 2/3: OPEN inventory now…"))
+            # Run reader's calibration (scans module .data, watches inventory flag)
+            addr = self.reader.calibrate_ui_struct()
+            if addr:
+                self.config.set_calibrated_ui_address(addr)
+                self.after(0, lambda: self._ui_calib_status.configure(
+                    text=f"Calibrated! UI struct at {hex(addr)}. Menu detection now works."))
+            else:
+                self.after(0, lambda: self._ui_calib_status.configure(
+                    text="Calibration failed: no candidate struct changed. Try again with inventory clearly open."))
+        except Exception as exc:
+            self.after(0, lambda: self._ui_calib_status.configure(text=f"Error: {exc}"))
 
     def _refresh_learned(self):
         """Show the active combo's potion table as plain text (or the defaults)."""
