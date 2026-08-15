@@ -244,6 +244,19 @@ def calculate_offsets(proc: Process) -> Offsets:
         return offs
     base = proc.module_base
 
+    def _test_ui_struct(proc, addr: int) -> bool:
+        """Quick sanity: UI struct at addr should have readable menu flag bytes."""
+        try:
+            buf = proc.read_bytes(addr - 0xA, 0x16D)
+            if len(buf) != 0x16D:
+                return False
+            # At least one flag byte should be readable (not all zero)
+            # and indices 0x01..0x1E should be in range
+            non_zero = sum(1 for b in buf[:0x1F] if b != 0)
+            return non_zero >= 0  # struct is readable; zero flags is valid (all closed)
+        except Exception:
+            return False
+
     for name, candidates in PATTERNS.items():
         resolved_here = False
         for cand in candidates:
@@ -263,6 +276,15 @@ def calculate_offsets(proc: Process) -> Offsets:
                     offs.matched[name] = cand.name
                     resolved_here = True
                     break
+            # Non-validated candidate with multiple hits: test each for a valid struct
+            if len(hits) > 1 and name == "UI":
+                for hit in hits:
+                    value = _resolve(cand, hit, base, memory)
+                    if value and _test_ui_struct(proc, base + value):
+                        setattr(offs, name, value)
+                        offs.matched[name] = cand.name
+                        resolved_here = True
+                        break
         if not resolved_here:
             offs.unresolved.append(name)
 

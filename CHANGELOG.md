@@ -5,6 +5,23 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.3-beta] - 2026-08-15
+
+### Fixed
+- **Menu detection (pause_when_menus_open) was broken.** The UI signature
+  (`ui-v3`) matched twice in the module; the scan rejected both hits (ambiguous
+  non-validated candidate), leaving `offsets.UI` unresolved and `open_menus()`
+  permanently returning empty — drinking never paused for real panels, but also
+  never worked correctly.  The scan now tests each hit and accepts the one that
+  resolves to a readable UI struct with valid flag bytes.
+
+### Changed
+- Default `pause_when_menus_open` disabled in user config (per testing
+  preference: potions work fine with inventory/stash open in this build).
+- Menu flag indices appear shifted for this Infernal build (Inventory flag
+  reads 0 even when open); detection is functional but inaccurate.  A proper
+  structural UI scan or flag remapping is deferred.
+
 ## [1.8.2-beta] - 2026-08-15
 
 Unified decision logic (no smart/plain tiers) and a robust best-effort fallback
