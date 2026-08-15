@@ -652,77 +652,100 @@ class GameReader:
         menus["MapShown"] = self.proc.read_u8(ui) != 0
         return menus
 
-    def calibrate_ui(self, step: str, progress_cb: callable = None) -> dict | None:
-        """Interactive UI calibration.
+    def calibrate_ui(self, progress_cb: callable = None) -> dict | None:
+        """Interactive UI calibration - detects flag indices by watching changes.
 
-        Returns a dict with 'address' and 'flags' (menu->index) when complete,
-        or None if cancelled/failed.  The caller handles UI prompts.
+        Simple 3-step process per menu:
+        1. Baseline (all closed)
+        2. Open menu -> detect which indices change
+        3. Close menu -> verify
 
-        Steps (progress_cb called with step name):
-        - "base": find UI struct address (pointer chase)
-        - "baseline": all menus closed
-        - each menu in MENU_FLAGS: "open:<menu>", "close:<menu>"
+        Returns dict with 'address' and 'flags' {menu_name: byte_index}.
         """
         from . import models as m
-        fmap = {}
 
-        # Step 1: find UI struct address
         if progress_cb:
             progress_cb("base")
         ui = self._get_ui_base()
         if not ui:
             return None
 
-        # Step 2: baseline (all closed)
-        if progress_cb:
-            progress_cb("baseline")
-        time.sleep(0.5)
-        buf_base = self.proc.read_bytes(ui - 0xA, 0x16D)
-        if len(buf_base) != 0x16D:
+        # Test read
+        test = self.proc.read_bytes(ui - 0xA, 0x16D)
+        if len(test) != 0x16D:
             return None
 
-        # Step 3: for each menu, detect which byte changes
-        for menu_name, default_idx in m.MENU_FLAGS.items():
-            # Skip menus that don't typically appear (Chat, QuestLog, etc.)
-            # Core blocking menus: Inventory, Character, SkillTree, NPCInteract,
-            # NPCShop, Stash, Anvil, Waypoint, Cube, MercInventory, QuitMenu
-            if menu_name not in m.BLOCKING_MENUS:
-                fmap[menu_name] = default_idx
-                continue
+        # Calibrate core menus (the ones that matter for pause/refill)
+        core_menus = ["Inventory", "Stash", "Character", "SkillTree", "NPCShop", "Cube", "Waypoint"]
+        fmap = {}
 
-            # Open menu
+        for menu_name in core_menus:
+            # Baseline: all closed
             if progress_cb:
-                progress_cb(f"open:{menu_name}")
-            time.sleep(2.0)  # user opens menu
-            buf_open = self.proc.read_bytes(ui - 0xA, 0x16D)
-            if len(buf_open) != 0x16D:
-                return None
-
-            # Find byte that changed 0 -> non-zero
-            changed = [i for i in range(0x16D) if buf_base[i] == 0 and buf_open[i] != 0]
-            if not changed:
-                # Use default index as fallback
-                fmap[menu_name] = default_idx
-            else:
-                fmap[menu_name] = changed[0]  # first changing byte
-
-            # Close menu
-            if progress_cb:
-                progress_cb(f"close:{menu_name}")
-            time.sleep(1.5)  # user closes menu
+                progress_cb(f"baseline:{menu_name}")
+            time.sleep(0.5)
             buf_base = self.proc.read_bytes(ui - 0xA, 0x16D)
             if len(buf_base) != 0x16D:
                 return None
 
-        # Verify: read one more time with all closed
+            # Open menu
+            if progress_cb:
+                progress_cb(f"open:{menu_name}")
+            time.sleep(3.0)  # user opens menu
+            buf_open = self.proc.read_bytes(ui - 0xA, 0x16D)
+            if len(buf_open) != 0x16D:
+                return None
+
+            # Find ALL indices that changed (not just 0->non-zero)
+            changed = [(i, buf_base[i], buf_open[i]) for i in range(0x16D) if buf_base[i] != buf_open[i]]
+            if not changed:
+                # Fallback to default index
+                from . import models as m
+                fmap[menu_name] = m.MENU_FLAGS.get(menu_name, 0)
+                # Still need to wait for close
+                if progress_cb:
+                    progress_cb(f"close:{menu_name}")
+                time.sleep(2.0)
+                continue
+
+            # Pick the index with the largest change magnitude (most reliable)
+            # Prefer indices that went 0->non-zero, but accept any significant change
+            best_idx = None
+            best_score = -1
+            for idx, old_val, new_val in changed:
+                # Score: prefer 0->non-zero, then larger absolute change
+                score = abs(new_val - old_val)
+                if old_val == 0 and new_val != 0:
+                    score += 100  # strong preference for 0->non-zero
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
+
+            if best_idx is not None:
+                fmap[menu_name] = best_idx
+            else:
+                from . import models as m
+                fmap[menu_name] = m.MENU_FLAGS.get(menu_name, 0)
+
+            # Close menu
+            if progress_cb:
+                progress_cb(f"close:{menu_name}")
+            time.sleep(2.0)
+            # Update baseline for next menu
+            buf_base = self.proc.read_bytes(ui - 0xA, 0x16D)
+            if len(buf_base) != 0x16D:
+                return None
+
+        # Verify final baseline (all closed)
         buf_final = self.proc.read_bytes(ui - 0xA, 0x16D)
         if len(buf_final) != 0x16D:
             return None
 
-        # All flags should be 0 now
-        for name, idx in fmap.items():
-            if buf_final[idx] != 0:
-                pass  # some menus may leave residue, acceptable
+        # Add non-core menus with default indices
+        from . import models as m
+        for name, idx in m.MENU_FLAGS.items():
+            if name not in fmap:
+                fmap[name] = idx
 
         return {"address": ui, "flags": fmap}
 
