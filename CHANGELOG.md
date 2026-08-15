@@ -5,6 +5,29 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.5-beta] - 2026-08-15
+
+### Added
+- **One-click menu calibration button** in Calibrate tab ("Calibrate menus").
+  Calls `GameReader.calibrate_ui_struct()` which finds the live UI struct at
+  `GameData+0x8` (verified pointer chase). Calibrated address persisted in
+  config and used automatically.  Simple one-click, no F8 hovering.
+
+### Changed
+- Dashboard now **always shows "menus open"** when any blocking panel is
+  detected (regardless of `pause_when_menus_open` setting).  The pause setting
+  only controls whether drinking pauses.
+- Default `pause_when_menus_open = true` (calibration now exists; user can
+  disable if they prefer drinking with inventory open).
+- Diagnostics fixed: `GameReader` accepts optional `config` parameter so
+  `diagnose()` works standalone.
+
+### Known limitation
+- Menu flag indices are shifted for this Infernal build (Inventory flag reads
+  0 even when open).  The live UI struct is correctly found at `GameData+0x8`,
+  but flag index remapping is needed for accurate per-panel detection.
+  `pause_when_menus_open` works reliably only after calibration + flag fix.
+
 ## [1.8.4-beta] - 2026-08-15
 
 ### Added

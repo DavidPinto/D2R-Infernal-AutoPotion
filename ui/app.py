@@ -295,9 +295,8 @@ class MainApp(ctk.CTk):
         if snap.in_game:
             self.char_label.configure(
                 text=f"{snap.name or 'Unknown'}  ·  {snap.class_name}  ·  Lvl {snap.level}")
-            pause_on = self.config.behavior.get("pause_when_menus_open", True)
-            self.state_label.configure(text="In game" + ("  ·  menus open (paused)"
-                                   if snap.menus_open and pause_on else ""), text_color="gray80")
+            self.state_label.configure(text="In game" + ("  ·  menus open"
+                                   if snap.menus_open else ""), text_color="gray80")
         else:
             self.char_label.configure(text="No character")
             self.state_label.configure(text="Not in game", text_color="gray60")
@@ -1344,7 +1343,8 @@ class MainApp(ctk.CTk):
         try:
             proc = Process.attach()
             reader = GameReader(proc, codes=self.config.potion_codes(),
-                                merc_txtfiles=self.config.merc_txtfiles_set())
+                                merc_txtfiles=self.config.merc_txtfiles_set(),
+                                config=self.config)
             watcher = PotionWatcher(reader, self.config, on_event=self.on_event)
             watcher.start()
             self.proc, self.reader, self.watcher = proc, reader, watcher

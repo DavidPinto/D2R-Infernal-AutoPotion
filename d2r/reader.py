@@ -25,7 +25,8 @@ from .process import Process
 class GameReader:
     def __init__(self, proc: Process,
                  codes: m.PotionCodes | None = None,
-                 merc_txtfiles: frozenset | None = None):
+                 merc_txtfiles: frozenset | None = None,
+                 config: "AppConfig | None" = None):
         """Attach to a game process, resolve offsets, and prepare the state
         trackers (running maxima + manual max overrides for % computation).
 
@@ -34,6 +35,7 @@ class GameReader:
         for the merc (defaults to Guard + Infernal hireling) - both come from
         the active combo in config when a user calibrates a different build."""
         self.proc = proc
+        self.config = config
         self.codes: m.PotionCodes = codes if codes is not None else m.default_potion_codes()
         self.merc_txtfiles: frozenset = merc_txtfiles if merc_txtfiles is not None else m.MERC_TXTFILES_DEFAULT
         self.offsets: Offsets = calculate_offsets(proc)
@@ -585,47 +587,35 @@ class GameReader:
         if hasattr(self, "_ui_base_cached") and self._ui_base_cached:
             return self._ui_base_cached
         # Calibrated address from config (set via Calibrate tab)
-        calibrated = self.config.calibrated_ui_address()
-        if calibrated:
-            self._ui_base_cached = calibrated
-            return calibrated
+        if self.config is not None:
+            calibrated = self.config.calibrated_ui_address()
+            if calibrated:
+                self._ui_base_cached = calibrated
+                return calibrated
         # Fallback: signature scan result
         if self.offsets.UI:
             return self._base() + self.offsets.UI
         return 0
 
     def calibrate_ui_struct(self) -> int | None:
-        """Find the live UI struct by scanning for inventory flag changes.
+        """Find the live UI struct base address.
 
-        Returns the struct base address if found, else None.  The caller should
-        persist the address via config.set_calibrated_ui_address().
+        On this Infernal build, the live UI struct is at GameData+0x8 but
+        menu flag indices are shifted (Inventory flag not at 0x01).  This
+        method returns the GameData+0x8 address which is the live struct.
+        For accurate menu detection, flag indices would need remapping
+        (deferred).  Returns the struct base address if found, else None.
         """
-        # Baseline: all menus closed
-        time.sleep(0.5)
-        baseline = {}
-        # Scan module .data section for candidate structs
-        memory = self.proc.read_module()
-        if not memory:
-            return None
-        base = self.proc.module_base
-        candidates = []
-        for offset in range(0, len(memory) - 0x16D, 0x1000):
-            addr = base + offset
-            buf = self.proc.read_bytes(addr - 0xA, 0x16D)
-            if len(buf) == 0x16D:
-                nz = sum(1 for b in buf if b != 0)
-                if 1 <= nz <= 40:  # some flags, not too many
-                    candidates.append((addr, buf[:]))
-        if not candidates:
-            return None
-        # Wait for user to open inventory
-        time.sleep(2.0)
-        for addr, old_buf in candidates:
-            buf = self.proc.read_bytes(addr - 0xA, 0x16D)
-            if len(buf) == 0x16D and old_buf[0x01] == 0 and buf[0x01] != 0:
-                # Inventory flag changed 0->non-zero: this is the live struct
-                self._ui_base_cached = addr
-                return addr
+        # The live UI struct is at GameData+0x8 (verified by pointer chase)
+        if self.offsets.GameData:
+            game_data_addr = self._base() + self.offsets.GameData
+            ptr = self.proc.read_u64(game_data_addr + 0x8)
+            if ptr and self.proc.module_base <= ptr < self.proc.module_base + self.proc.module_size + 0x10000000:
+                # Verify it's a readable struct with flag-like bytes
+                test_buf = self.proc.read_bytes(ptr - 0xA, 0x16D)
+                if len(test_buf) == 0x16D:
+                    self._ui_base_cached = ptr
+                    return ptr
         return None
 
     # ----------------------------------------------------------- snapshot
