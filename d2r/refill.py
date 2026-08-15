@@ -153,10 +153,15 @@ def plan_consume(hp_percent, mana_percent, hp_def, mp_def, max_hp, max_mana,
                      "max_value": max_value, "reason": reason})
 
     if not getattr(pc, "ok", False):
-        # Belt unreadable: decide like the plain tier.  Any presence/coverage
-        # check would read as "empty", so the fallback key path takes over.
-        if hp_critical or mp_critical:
+        # Belt unreadable: the fallback key for each action is pressed.  Pick the
+        # action that matches the critical stat so a mana crisis drinks a mana
+        # potion (W), not a rejuv that may not even exist.
+        if hp_critical and mp_critical:
             act("rejuv", max(hp_def, mp_def), max(max_hp, max_mana), both_reason)
+        elif hp_critical:
+            act("heal", hp_def, max_hp, f"HP {hp_percent}%")
+        elif mp_critical:
+            act("mana", mp_def, max_mana, f"MP {mana_percent}%")
         else:
             if hp_percent <= heal_at:
                 act("heal", hp_def, max_hp, f"HP {hp_percent}%")
@@ -167,8 +172,9 @@ def plan_consume(hp_percent, mana_percent, hp_def, mp_def, max_hp, max_mana,
     allowed = _allowed_for(managed)
 
     def critical_one(kind: str, deficit: int, max_value: int, reason: str) -> None:
-        """One stat is critical: covering specific potion, else rejuv, else any
-        specific potion (even under-strength), else report it as missing."""
+        """One stat is critical: a covering potion of that kind, else a rejuv
+        (which covers both), else any potion of that kind even under-strength,
+        else report it as missing."""
         if _belt_covering(kind, deficit, max_value, pc, allowed):
             act(kind, deficit, max_value, reason)
         elif _belt_has_kind("rejuv", pc, managed):

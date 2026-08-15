@@ -5,64 +5,48 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.9.0] - 2026-08-15
+## [1.8.1-beta] - 2026-08-15
 
-Belt refill actually works now (it relocates potions in the wrong column and
-the two-click refill never leaves a potion stuck on the cursor), belt hotkeys
-are user-editable to match in-game remaps, the global hotkey is a single
-click-to-capture button, and "arm/disarm" is gone.
+Core drinking bug fixes and a UI clean-up.  Versioning now uses small
+increments with a beta suffix so we stop creeping toward 2.0 while features are
+still settling.  The **belt refill** and **belt-plan** features are deferred and
+hidden from the UI until they can be made reliable — the app now focuses on
+rock-solid HP / Mana / Merc potion drinking for the eventual 2.0 release.
+
+### Fixed
+
+- **Mana potions now drink at near-0% mana.**  Plain tier (smart disabled) used
+  to sit on the rejuv check when only mana was critical and no rejuv was on the
+  belt — it now falls back to a mana potion instead of doing nothing.  The smart
+  tier's single-critical path also prefers a covering potion, then rejuv, then
+  any potion of the wanted kind (never wasted), so under-strength potions are
+  still drunk when rejuv is absent.
+- **Belt hotkey UI fixed.**  Each column is now a clean `[tickbox] [bind-key
+  button]` row — the button shows `Column -> Key` and is the only control next
+  to its checkbox (the old redundant double-letter layout is gone).
 
 ### Changed
 
-- **"Arm/Armed" → "enable/disable".** The top-right toggle is now
-  **ENABLED/DISABLED**, all help text and logs say enable/disable, and the
-  enable gate (not connected / offsets unresolved) no longer uses the word
-  "arm".  Wording in the UI, logs, and docs only.
-- **Global hotkey is one button.** The preset dropdown + "Bind custom…"/"Off"
-  trio on the *Keys* tab is replaced by a single **Hotkey** button next to the
-  enable/disable toggle on the top bar: click it, press a combo
-  (Ctrl/Alt/Shift + a key), done.  Esc or Delete clears the hotkey.  The status
-  label shows *active* / *failed (in use?)*.
-- **Per-column belt hotkeys.** Each managed Q/W/E/R column now has a key button
-  next to its checkbox.  Click it and press the key you rebound the belt column
-  to in the game (D2R lets you remap Q/W/E/R); Esc restores the default.  The
-  watcher presses the rebound key whenever it drinks from that column, and the
-  unreadable-belt fallback keys honour the rebinds too.
-- **Belt refill fixed and extended.** Two bugs killed the old feature: the F8
-  calibration listener crashed into the global hotkey's window class, and a
-  refill step only clicked the inventory potion (lifting it onto the cursor
-  without ever dropping it into the belt).  Each step is now two clicks (pick
-  up, then drop into the target belt slot).  Refill also **relocates potions
-  sitting in the wrong column** — a potion in a column that prefers another kind
-  is moved to the column that wants it (smart tier).  Both the inventory page
-  and the belt panel need a calibrated click grid (belt cells can be calibrated
-  by hovering belt potions and pressing F8).
-- **A potion in the "wrong" slot is never wasted.** When a stat is critical and
-  no covering potion or rejuv is on the belt, the app drinks *any* potion of
-  that kind that is there (even under-strength) instead of doing nothing.
-  With both stats critical and no rejuv, it drinks the heal and the mana that
-  are present.  `plan_consume`'s "missing" list only reports kinds that are
-  wanted but genuinely absent.
-- **Global hotkey window-class collision fixed.** Every `HotkeyListener` now
-  uses its own unique Win32 window class, so re-registering the toggle hotkey
-  or starting F8 calibration no longer fails with `ERROR_CLASS_ALREADY_EXISTS`
-  (the "failed (in use?)" message).
+- **Belt refill & belt-plan UI hidden.**  D2R only moves items with the mouse
+  (no keyboard alternative), and the click-place refill could not be made
+  reliable yet, so both sections are removed from the *Keys* tab for now.  The
+  drinking logic, managed-column hotkeys, and the enable/disable + single-button
+  global hotkey all remain fully active.
+- **"Arm/Armed" → "enable/disable"** (top-right toggle is **ENABLED/DISABLED**;
+  all help text and logs updated).  **Global hotkey is one button** next to the
+  toggle (click, press Ctrl/Alt/Shift + a key, Esc clears).  **Per-column belt
+  hotkeys** editable next to each managed checkbox — the watcher presses the
+  rebound key when it drinks from that column, and the unreadable-belt fallback
+  keys honour the rebinds.
 
 ### Added
 
 - `AppConfig.belt_key()` / `set_belt_key()` / `belt_keys_map()` (persisted
   `belt_keys` section; Esc/Delete/unknown names reset to the default letter) and
-  `belt_refill_mapping()` / `set_belt_refill_mapping()` /
-  `clear_belt_refill_mapping()` (persisted `belt_calibrated`/`belt_cell`/
-  `belt_origin_x`/`belt_origin_y`).
-- `GameReader.belt_items()` — belt potions with their slot index, for
-  calibration and the belt plan.
-- `refill.plan_moves()` — pure relocation plan for wrong-column potions; the
-  watcher executes one two-click move per tick.
-- `HotkeyListener` unique per-instance window class names.
-- Unit tests for the belt-key accessors, belt mapping accessors, `plan_moves`,
-  rebound-column presses, and the rebind-aware fallback keys.  Test suite:
-  **106 tests green** (compileall + headless UI smoke pass).
+  `HotkeyListener` unique per-instance window class names.
+- Unit tests for the belt-key accessors, the plain-tier mana fallback, and the
+  rejuv-ordering fix.  Test suite: **110 tests green** (compileall + headless
+  UI smoke pass).
 
 ## [1.8.0] - 2026-08-15
 

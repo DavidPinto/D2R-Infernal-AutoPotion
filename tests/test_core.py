@@ -682,6 +682,25 @@ class RefillTests(unittest.TestCase):
         self.assertEqual(acts[0]["action"], "mana")
         self.assertEqual(acts[0]["deficit"], 150)
 
+    def test_plan_consume_mana_critical_drinks_mana_not_rejuv(self):
+        # Mana critical, HP fine, a rejuv is also on the belt: the app must drink
+        # the mana potion (W), not waste a rejuv.
+        pc = self._pc([self._col("W", 610), self._col("E", 531)])
+        acts, missing = self._consume(200, 50, 200, 200, pc)
+        self.assertEqual([a["action"] for a in acts], ["mana"])
+        self.assertEqual(missing, [])
+
+    def test_plan_consume_unreadable_mana_critical_presses_mana(self):
+        # Belt unreadable: a critical mana stat must press the mana fallback (W),
+        # not only a rejuv that may not exist.
+        pc = m.PotionCounts()   # ok stays False
+        acts, _ = self._consume(200, 20, 200, 200, pc)
+        self.assertEqual([a["action"] for a in acts], ["mana"])
+        acts, _ = self._consume(20, 200, 200, 200, pc)
+        self.assertEqual([a["action"] for a in acts], ["heal"])
+        acts, _ = self._consume(20, 20, 200, 200, pc)
+        self.assertEqual([a["action"] for a in acts], ["rejuv"])
+
     def test_plan_consume_noncritical_heal_and_mana_independent(self):
         pc = self._pc([self._col("Q", 602), self._col("W", 608)])
         acts, missing = self._consume(140, 100, 200, 200, pc)
@@ -889,14 +908,16 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(w.sender.pressed, ["mana"])
 
     def test_tick_rejuv_on_critical_hp(self):
+        # Belt unreadable: a single-critical stat presses that stat's own potion
+        # (heal), not a rejuv that may not be on the belt.
         w = self._watcher()
         w._tick(self._snap(hp=20, mana=90))
-        self.assertEqual(w.sender.pressed, ["rejuv"])
+        self.assertEqual(w.sender.pressed, ["heal"])
 
     def test_tick_rejuv_on_critical_mana(self):
         w = self._watcher()
         w._tick(self._snap(hp=90, mana=10))
-        self.assertEqual(w.sender.pressed, ["rejuv"])
+        self.assertEqual(w.sender.pressed, ["mana"])
 
     def test_tick_merc_rejuv_preferred(self):
         w = self._watcher()
@@ -1076,6 +1097,25 @@ class WatcherTests(unittest.TestCase):
         # KeySender resolves the rebound column inside _fallback_key).
         w._tick(self._snap(hp=70, mana=90))
         self.assertEqual(w.sender.pressed_keys, [("heal", None)])
+
+    def test_plain_tier_drinks_mana_when_rejuv_unavailable(self):
+        w = self._watcher()
+        w.config.set_smart_enabled(False)
+        # Near-0% mana, HP fine, a mana potion on the belt, no rejuv: the
+        # plain tier must fall back to a mana potion, not sit on the rejuv check.
+        snap = self._belt_snap(hp=170, mana=2, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 602), self._col("W", 608)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "W")])
+
+    def test_plain_tier_prefers_rejuv_over_mana_when_available(self):
+        w = self._watcher()
+        w.config.set_smart_enabled(False)
+        # Rejuv present and warranted: it is drunk (covers MP) and mana is not.
+        snap = self._belt_snap(hp=170, mana=2, max_hp=200, max_mana=200,
+                               columns=[self._col("W", 608), self._col("R", 531)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("rejuv", "R")])
 
     def test_pick_respects_managed_columns(self):
         w = self._watcher()

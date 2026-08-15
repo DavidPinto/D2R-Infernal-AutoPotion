@@ -246,13 +246,17 @@ class PotionWatcher:
         use_rejuv = (snap.hp_percent <= cfg.threshold("rejuv_potion_at_life")
                      or snap.mana_percent < cfg.threshold("rejuv_potion_at_mana"))
         if use_rejuv:
-            self._act("rejuv", "rejuv", max(hp_def, mp_def), max(snap.max_hp, snap.max_mana),
-                      f"HP {snap.hp_percent}% / MP {snap.mana_percent}%", snap, t)
-        else:
-            if snap.hp_percent <= cfg.threshold("healing_potion_at"):
-                self._act("heal", "heal", hp_def, snap.max_hp, f"HP {snap.hp_percent}%", snap, t)
-            if snap.mana_percent <= cfg.threshold("mana_potion_at"):
-                self._act("mana", "mana", mp_def, snap.max_mana, f"MP {snap.mana_percent}%", snap, t)
+            # Rejuv restores both HP and MP, so when it is warranted we drink it
+            # and skip heal/mana.  When no rejuv potion is available we must still
+            # cover the low stat, so fall through to the specific potions.
+            drank = self._act("rejuv", "rejuv", max(hp_def, mp_def), max(snap.max_hp, snap.max_mana),
+                              f"HP {snap.hp_percent}% / MP {snap.mana_percent}%", snap, t)
+            if drank:
+                return
+        if snap.hp_percent <= cfg.threshold("healing_potion_at"):
+            self._act("heal", "heal", hp_def, snap.max_hp, f"HP {snap.hp_percent}%", snap, t)
+        if snap.mana_percent <= cfg.threshold("mana_potion_at"):
+            self._act("mana", "mana", mp_def, snap.max_mana, f"MP {snap.mana_percent}%", snap, t)
 
     def _smart_tick(self, snap: m.PlayerSnapshot) -> None:
         """Smart-tier player decisions via :func:`refill.plan_consume`."""
@@ -312,21 +316,23 @@ class PotionWatcher:
         return next((c for c in pc.columns if c.index == idx), False)
 
     def _act(self, action: str, kind: str, deficit: int, max_value: int,
-             reason: str, snap: m.PlayerSnapshot, t: float) -> None:
+             reason: str, snap: m.PlayerSnapshot, t: float) -> bool:
         """Grade-aware drink for one action: pick a column (or skip if the belt
         has no potion of the needed kind), apply the grade-aware gate, then press
-        that column's key."""
+        that column's key.  Returns True when a drink was actually attempted
+        (a usable column existed and the cooldown allowed it)."""
         col = self._pick(kind, deficit, max_value, snap)
         if col is False:
             if action not in self._out_of_stock:
                 self._out_of_stock.add(action)
                 self._emit("info", f"No {kind} potion left on the belt.", snap)
-            return
+            return False
         grade = col.grade if isinstance(col, m.BeltColumn) else -1
         if not self._ready(action, t, candidate_grade=grade):
-            return
+            return False
         self._out_of_stock.discard(action)
         self._use(action, reason, snap, column=col)
+        return True
 
     def _ready(self, action: str, now: float, candidate_grade: int = -1) -> bool:
         """True once this action's cooldown has elapsed since its last press.
