@@ -11,10 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Full menu calibration** in Calibrate tab ("Calibrate menus").
   Guides user to CLOSE all menus, then OPEN/CLOSE each blocking menu
   (Inventory, Stash, Character, etc.) one by one. Detects the exact byte
-  index for each menu flag. Persists both UI struct address AND flag index
-  map. Works on ANY build — no hardcoded flag indices.
+  index for each menu flag by measuring actual byte changes (not assuming
+  0→non-zero). Persists both UI struct address AND flag index map.
+  Works on ANY build — no hardcoded flag indices.
 
 ### Changed
+- `GameReader.calibrate_ui()` detects flag indices by scoring actual byte
+  changes (magnitude + preference for 0→non-zero). Robust across builds.
 - `GameReader.open_menus()` uses calibrated flag indices when available,
   falling back to defaults. Accurate per-panel detection on all builds.
 - Dashboard "menus open" indicator now accurate when calibrated.
