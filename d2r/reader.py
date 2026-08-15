@@ -15,6 +15,7 @@ show the read as failed/implausible so it is easy to catch.
 from __future__ import annotations
 
 import struct
+import time
 
 from . import models as m
 from .offsets import Offsets, calculate_offsets, _is_likely_ptr, _unit_looks_valid
@@ -563,9 +564,9 @@ class GameReader:
 
         Each flag is a byte in the UI struct; 'MapShown' is a separate byte at
         the UI base.  Returns a dict of {menu_name: bool}."""
-        if not self.offsets.UI:
+        ui = self._get_ui_base()
+        if not ui:
             return {}
-        ui = self._base() + self.offsets.UI
         buf = self.proc.read_bytes(ui - 0xA, 0x16D)
         if len(buf) != 0x16D:
             return {}
@@ -574,6 +575,58 @@ class GameReader:
             menus[name] = buf[idx] != 0
         menus["MapShown"] = self.proc.read_u8(ui) != 0
         return menus
+
+    def _get_ui_base(self) -> int:
+        """Return the live UI struct base address.
+
+        Uses calibrated address if available, otherwise falls back to signature.
+        The signature (ui-v3) is ambiguous on this build; calibration finds the
+        real heap-allocated UI struct by detecting inventory flag changes."""
+        if hasattr(self, "_ui_base_cached") and self._ui_base_cached:
+            return self._ui_base_cached
+        # Calibrated address from config (set via Calibrate tab)
+        calibrated = self.config.calibrated_ui_address()
+        if calibrated:
+            self._ui_base_cached = calibrated
+            return calibrated
+        # Fallback: signature scan result
+        if self.offsets.UI:
+            return self._base() + self.offsets.UI
+        return 0
+
+    def calibrate_ui_struct(self) -> int | None:
+        """Find the live UI struct by scanning for inventory flag changes.
+
+        Returns the struct base address if found, else None.  The caller should
+        persist the address via config.set_calibrated_ui_address().
+        """
+        # Baseline: all menus closed
+        time.sleep(0.5)
+        baseline = {}
+        # Scan module .data section for candidate structs
+        memory = self.proc.read_module()
+        if not memory:
+            return None
+        base = self.proc.module_base
+        candidates = []
+        for offset in range(0, len(memory) - 0x16D, 0x1000):
+            addr = base + offset
+            buf = self.proc.read_bytes(addr - 0xA, 0x16D)
+            if len(buf) == 0x16D:
+                nz = sum(1 for b in buf if b != 0)
+                if 1 <= nz <= 40:  # some flags, not too many
+                    candidates.append((addr, buf[:]))
+        if not candidates:
+            return None
+        # Wait for user to open inventory
+        time.sleep(2.0)
+        for addr, old_buf in candidates:
+            buf = self.proc.read_bytes(addr - 0xA, 0x16D)
+            if len(buf) == 0x16D and old_buf[0x01] == 0 and buf[0x01] != 0:
+                # Inventory flag changed 0->non-zero: this is the live struct
+                self._ui_base_cached = addr
+                return addr
+        return None
 
     # ----------------------------------------------------------- snapshot
     def snapshot(self) -> m.PlayerSnapshot:

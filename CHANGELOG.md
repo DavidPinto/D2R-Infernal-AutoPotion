@@ -5,6 +5,28 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.4-beta] - 2026-08-15
+
+### Added
+- **UI struct calibration framework** for reliable menu detection.  The `ui-v3`
+  signature resolves to a ghost copy on this build; the real menu flag array
+  lives in heap memory.  Added `GameReader.calibrate_ui_struct()` which scans
+  for candidate structs and detects the live one by watching the inventory flag
+  change (open/close inventory).  Calibrated address persisted in config
+  (`calibrated_ui_address`) and used automatically on subsequent runs.
+- Config accessors `calibrated_ui_address()` / `set_calibrated_ui_address()`.
+
+### Changed
+- `GameReader.open_menus()` now uses calibrated address when available,
+  falling back to signature.  Eliminates false "menus open" from ghost struct.
+- Dashboard "menus open (paused)" only shows when `pause_when_menus_open=true`.
+
+### Deferred
+- Full Calibrate UI tab integration (one-click calibration).  The framework
+  exists; a UI button can call `reader.calibrate_ui_struct()` and persist the
+  result.  Required for reliable refill feature (needs accurate inventory-open
+  detection).
+
 ## [1.8.3-beta] - 2026-08-15
 
 ### Fixed

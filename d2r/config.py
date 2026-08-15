@@ -568,3 +568,12 @@ class AppConfig:
         if self.combo == name:
             self.combo = ""
         self.save()
+
+    def calibrated_ui_address(self) -> int:
+        """Persisted live UI struct base address (0 if not calibrated)."""
+        return int(self._data.get("calibrated_ui_address", 0))
+
+    def set_calibrated_ui_address(self, addr: int) -> None:
+        """Store the calibrated UI struct base address."""
+        self._data["calibrated_ui_address"] = int(addr)
+        self.save()
