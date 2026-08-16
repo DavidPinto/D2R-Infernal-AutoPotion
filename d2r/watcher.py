@@ -305,8 +305,8 @@ class PotionWatcher:
         allowed = tuple(self.config.managed_columns())
         idx = pc.choose_belt_column(kind, deficit, max_value, allowed_keys=allowed)
         if idx is None:
-            # Normal selection failed - try keep-alive mode if enabled and critical
-            if self.config.keep_alive_mode and critical and kind == "rejuv":
+            # Normal selection failed - try desperation mode if enabled and critical
+            if self.config.desperation_mode and critical and kind == "rejuv":
                 idx = self._find_reachable_rejuv(snap)
                 if idx is not None:
                     return next((c for c in pc.columns if c.index == idx), False)

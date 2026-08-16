@@ -414,18 +414,19 @@ class MainApp(ctk.CTk):
                      "back after the in-effect potion has finished restoring, so "
                      "it never drags the fill rate down.  Rejuvenation is instant.").pack(anchor="w", padx=12, pady=(0, 4))
 
-        # Keep alive mode
-        keep_alive_frame = ctk.CTkFrame(body, fg_color="transparent")
-        keep_alive_frame.pack(fill="x", padx=12, pady=(4, 2))
-        self._keep_alive_var = ctk.BooleanVar(value=self.config.keep_alive_mode)
-        keep_alive_cb = ctk.CTkCheckBox(keep_alive_frame,
-            text="Keep alive mode: when HP critical, bypass restrictions to reach rejuv (respects empty slots, allows drinking mana to reach rejuv)",
-            variable=self._keep_alive_var,
-            command=self._on_keep_alive_toggle)
-        keep_alive_cb.pack(side="left")
-        w.hint(keep_alive_frame, "When HP is at/below rejuv threshold: allow drinking potions above a rejuv to reach it. "
+        # Desperation mode
+        desperation_frame = ctk.CTkFrame(body, fg_color="transparent")
+        desperation_frame.pack(fill="x", padx=12, pady=(4, 2))
+        self._desperation_var = ctk.BooleanVar(value=self.config.desperation_mode)
+        desperation_cb = ctk.CTkCheckBox(desperation_frame,
+            text="Desperation mode: when HP critical, drink through potions to reach a rejuv (wasteful, respects empty slots)",
+            variable=self._desperation_var,
+            command=self._on_desperation_toggle)
+        desperation_cb.pack(side="left")
+        w.hint(desperation_frame, "When HP is at/below rejuv threshold: drink through potions above a rejuv to reach it. "
+                     "WASTEFUL - may consume multiple potions to clear a path. "
                      "Respects empty slots (potions don't drop through empty space). "
-                     "Drinking mana to reach a rejuv is allowed; averaging HP potions is still limited.").pack(anchor="w", padx=24, pady=(0, 4))
+                     "Only enable if you accept wasting potions to survive.").pack(anchor="w", padx=24, pady=(0, 4))
 
         ctk.CTkButton(body, text="Reset to defaults", fg_color="#444",
                       hover_color="#555", command=self._reset_triggers).pack(anchor="w", padx=12, pady=14)
@@ -439,8 +440,8 @@ class MainApp(ctk.CTk):
         self.config.behavior["potion_margin_percent"] = int(round(value))
         self.config.save()
 
-    def _on_keep_alive_toggle(self):
-        self.config.keep_alive_mode = self._keep_alive_var.get()
+    def _on_desperation_toggle(self):
+        self.config.desperation_mode = self._desperation_var.get()
         self.config.save()
 
     def _sync_sliders(self):
@@ -449,14 +450,14 @@ class MainApp(ctk.CTk):
             frame.set_value(self.config.threshold(k))  # type: ignore[attr-defined]
         self._margin_slider.set_value(  # type: ignore[attr-defined]
             self.config.behavior.get("potion_margin_percent", 20))
-        self._keep_alive_var.set(self.config.keep_alive_mode)
+        self._desperation_var.set(self.config.desperation_mode)
 
     def _reset_triggers(self):
         from d2r.config import DEFAULTS
         self.config.thresholds = dict(DEFAULTS["thresholds"])
         self.config.behavior["potion_margin_percent"] = DEFAULTS["behavior"]["potion_margin_percent"]
         self.config.behavior["potion_class_override"] = ""
-        self.config.behavior["keep_alive_mode"] = DEFAULTS["behavior"]["keep_alive_mode"]
+        self.config.behavior["desperation_mode"] = DEFAULTS["behavior"]["desperation_mode"]
         self._sync_sliders()
         self.config.save()
 
