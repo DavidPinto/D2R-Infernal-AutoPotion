@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit).  It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.8.2-beta` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.8.3-beta` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`.  See
 > [Limitations](#limitations) below.
 
@@ -177,7 +177,36 @@ and how many slots are filled/free.
 | Merc health potion   | Merc HP ≤ 60%        |
 | Merc rejuv potion    | Merc HP ≤ 20%        |
 
+| Merc rejuv potion    | Merc HP ≤ 20%        |
+
 All adjustable in the UI (*Triggers* tab), which also has a **Safety margin (%)**
+
+### Desperation mode
+
+When enabled (Triggers tab → **Desperation mode**), and HP drops to or below the
+Rejuvenation threshold (HP ≤ 25% by default), the app will:
+
+1. Look for a **rejuvenation potion** in rows 1-3 (slots 4-15) of any **managed**
+   belt column.
+2. Verify **no empty slots** exist between that rejuv and row 0 (potions only drop
+   potion-to-potion in D2R).
+2. Confirm **row 0 has a potion** (the one you’ll drink to make the rejuv drop).
+3. Press the key for that column to drink the row-0 potion, causing the rejuv to
+   drop into row 0.
+3. On the next tick (or when HP is still critical), the rejuv is now in row 0
+   and will be drunk for the instant heal.
+
+**WASTEFUL** - this mode may drink multiple potions (heal/mana) to clear a path
+to a rejuv.  It respects empty slots (potions don’t drop through empty space).
+Only enable if you accept wasting potions to survive.
+
+**Use case:** You have a Full Rejuvenation in slot 5 (row 1, column W) but your
+Q/W/E columns have mana/heal potions in row 0.  With Desperation mode on, the
+app will drink the Q/W/E potions so the rejuv falls down, then drink the rejuv.
+
+**Limitations:** Only works for rejuvenation potions.  Does not drink through
+empty slots (the rejuv won’t fall through gaps).  May consume many potions per
+cycle.  Disable for normal play.
 slider: a same-or-stronger potion may be drunk again once the one in effect is
 half consumed, and this margin is how long a *weaker* potion is held back after
 the in-effect potion finishes restoring (rejuvenation is instant and ignores it).

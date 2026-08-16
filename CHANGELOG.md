@@ -5,6 +5,30 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.8-beta] - 2026-08-16
+
+### Added
+- **Desperation Mode** (Triggers tab checkbox).  When HP is at/below the rejuv
+  threshold, bypasses normal restrictions to reach a rejuv potion:
+  - Looks for a rejuv in rows 1-3 of managed belt columns
+  - Requires no empty slots between the rejuv and row 0 (potions drop
+    potion-to-potion)
+  - Requires row 0 to have a potion (to make the rejuv drop)
+  - Allows drinking row-0 potions (mana/heal) to reach the rejuv (instant
+    heal)
+  - **WASTEFUL** - may consume multiple potions to clear a path to the rejuv
+  - Respects empty slots (potions don't drop through empty space)
+  - Only activates when HP is at/below the rejuv threshold (critical)
+  - UI checkbox with clear warning about wastefulness
+
+### Changed
+- Replaced "Keep Alive Mode" with "Desperation Mode" (more descriptive name
+  matching the wasteful nature of the feature)
+- UI checkbox renamed with clear warning tooltip
+
+### Fixed
+- Menu detection now only reports calibrated menus (no false positives)
+
 ## [1.8.7-beta] - 2026-08-15
 
 ### Added
