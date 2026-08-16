@@ -290,7 +290,7 @@ class PotionWatcher:
                           f"Merc HP {snap.merc_hp_percent}%", snap, t)
 
     def _pick(self, kind: str, deficit: int, max_value: int,
-              snap: m.PlayerSnapshot) -> m.BeltColumn | None | bool:
+              snap: m.PlayerSnapshot, critical: bool = False) -> m.BeltColumn | None | bool:
         """Choose the belt column to drink from.
 
         Returns the BeltColumn to drink, False when the belt is known to have no
@@ -305,8 +305,49 @@ class PotionWatcher:
         allowed = tuple(self.config.managed_columns())
         idx = pc.choose_belt_column(kind, deficit, max_value, allowed_keys=allowed)
         if idx is None:
+            # Normal selection failed - try keep-alive mode if enabled and critical
+            if self.config.keep_alive_mode and critical and kind == "rejuv":
+                idx = self._find_reachable_rejuv(snap)
+                if idx is not None:
+                    return next((c for c in pc.columns if c.index == idx), False)
             return False
         return next((c for c in pc.columns if c.index == idx), False)
+
+    def _find_reachable_rejuv(self, snap: m.PlayerSnapshot) -> int | None:
+        """Find a column where a rejuv is reachable by drinking potions above it.
+
+        A rejuv is reachable if:
+        - It's in row 1, 2, or 3 of a managed column
+        - All slots between it and row 0 are filled (no empty slots)
+        - Row 0 has a potion we can drink to make the rejuv drop down
+        """
+        pc = snap.potion_counts
+        if not pc.ok:
+            return None
+
+        # Check each column for a reachable rejuv
+        for col in pc.columns:
+            if col.count == 0:  # Row 0 must have a potion to drink
+                continue
+            col_idx = col.index
+            # Look for rejuv in rows 1-3 (slots 4-15)
+            for slot in range(4, min(pc.belt_rows * 4, 16)):
+                if slot // 4 <= 0:  # Only rows 1+
+                    continue
+                if slot % 4 != col_idx:
+                    continue
+                kind = pc.belt_slots.get(slot)
+                if kind == "rejuv":
+                    # Check no empty slots between this slot and row 0
+                    reachable = True
+                    for check_slot in range(4, slot):
+                        if check_slot % 4 == col_idx:
+                            if check_slot not in pc.belt_filled:
+                                reachable = False
+                                break
+                    if reachable:
+                        return col_idx
+        return None
 
     def _act(self, action: str, kind: str, deficit: int, max_value: int,
              reason: str, snap: m.PlayerSnapshot, t: float,
@@ -319,7 +360,7 @@ class PotionWatcher:
         On a *critical* stat with no potion of the wanted kind on the managed
         belt, an unclassified column is still drunk as a best-effort (the potion
         may simply be uncalibrated for this build) instead of sitting at 0%."""
-        col = self._pick(kind, deficit, max_value, snap)
+        col = self._pick(kind, deficit, max_value, snap, critical=critical)
         if col is False:
             if critical:
                 col = self._unclassified_column(action, snap.potion_counts)

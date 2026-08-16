@@ -96,6 +96,10 @@ DEFAULTS = {
         # (prefer a specific potion over a rejuv when only one stat is low) and
         # refill the belt per the layout/ratio plan below.
         "smart": True,
+        # Keep alive mode: when HP is critical, bypass some restrictions to reach
+        # instant-heal rejuv potions (e.g., drink mana potions above a rejuv).
+        # Respects empty slots (potions don't drop through empty slots).
+        "keep_alive_mode": False,
         # Potions restore over a duration (rejuv is instant).  A same-or-higher
         # grade potion may be drunk once the in-effect potion is half consumed;
         # a weaker/unknown one waits the full duration * (1 + margin) so it never
@@ -206,6 +210,14 @@ class AppConfig:
     @enabled.setter
     def enabled(self, value: bool) -> None:
         self.behavior["enabled"] = bool(value)
+
+    @property
+    def keep_alive_mode(self) -> bool:
+        return bool(self.behavior.get("keep_alive_mode", False))
+
+    @keep_alive_mode.setter
+    def keep_alive_mode(self, value: bool) -> None:
+        self.behavior["keep_alive_mode"] = bool(value)
 
     # ------------------------------------------------- belt columns + refill
     def managed_columns(self) -> list[str]:
