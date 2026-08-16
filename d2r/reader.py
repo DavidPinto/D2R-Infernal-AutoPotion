@@ -630,14 +630,16 @@ class GameReader:
         return 0
 
     def _get_flag_map(self) -> dict[str, int] | None:
-        """Return calibrated flag index map {menu_name: byte_index}."""
+        """Return calibrated flag index map {menu_name: byte_index}.
+        
+        Only returns menus that have been calibrated. Uncalibrated menus
+        are not included to avoid false positives from wrong default indices.
+        """
         if self.config is not None:
             fmap = self.config.calibrated_ui_flags()
             if fmap:
                 return fmap
-        # Default MENU_FLAGS (works on vanilla/classic builds)
-        from . import models as m
-        return m.MENU_FLAGS
+        return None
 
     def open_menus(self) -> dict:
         """Read the UI panel flags using calibrated struct address + flag map."""
@@ -733,12 +735,6 @@ class GameReader:
         buf_final = self.proc.read_bytes(ui - 0xA, 0x16D)
         if len(buf_final) != 0x16D:
             return None
-
-        # Add other menus with default indices
-        from . import models as m
-        for name, idx in m.MENU_FLAGS.items():
-            if name not in fmap:
-                fmap[name] = idx
 
         return {"address": ui, "flags": fmap}
 
