@@ -1189,6 +1189,8 @@ class MainApp(ctk.CTk):
                 fmap = result["flags"]
                 self.config.set_calibrated_ui_address(addr)
                 self.config.set_calibrated_ui_flags(fmap)
+                if result.get("closed_values"):
+                    self.config.set_calibrated_ui_closed_values(result["closed_values"])
                 self.after(0, lambda: self._ui_calib_status.configure(
                     text=f"Calibrated! UI struct at {hex(addr)}. {len(fmap)} menu flags mapped. Detection now works."))
             else:

@@ -180,8 +180,22 @@ CLASS_MANA_GROUP = {
     "Barbarian": 0, "Druid": 2, "Assassin": 1, "Warlock": 2,
 }
 CLASS_GROUPS = {"heal": CLASS_HEAL_GROUP, "mana": CLASS_MANA_GROUP}
+# Character class names by class byte (D2R 3.x).  Unknown classes fall back to str(cls).
+CLASS_NAMES = [
+    "Amazon", "Sorceress", "Necromancer", "Paladin",
+    "Barbarian", "Druid", "Assassin", "Warlock",
+]
 # Rejuvenation potions restore this % of max life AND max mana, instantly.
 REJUV_RESTORE_PERCENT = (35, 100)
+
+# Action labels for UI/logging.
+ACTION_LABELS = {
+    "heal": "Health potion",
+    "mana": "Mana potion",
+    "rejuv": "Rejuvenation potion",
+    "merc_heal": "Merc health potion",
+    "merc_rejuv": "Merc rejuv potion",
+}
 
 # Default hireling txtFileNos (player-owned NPC): 338 Guard (classic D2R),
 # 271 the Infernal Edition Warlock hireling.  Users can override per combo.

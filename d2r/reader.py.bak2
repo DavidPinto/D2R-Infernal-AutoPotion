@@ -568,17 +568,35 @@ class GameReader:
     def open_menus(self) -> dict:
         """Read the UI panel flags (inventory, stash, vendor, chat, ...).
 
-        Each flag is a byte in the UI struct; 'MapShown' is a separate byte at
-        the UI base.  Returns a dict of {menu_name: bool}."""
+        Each flag is a specific bit in a byte array. Only calibrated menus are checked.
+        Returns a dict of {menu_name: bool}."""
+        if not self.offsets.UI:
+            return {}
         ui = self._get_ui_base()
         if not ui:
             return {}
         buf = self.proc.read_bytes(ui - 0xA, 0x16D)
         if len(buf) != 0x16D:
             return {}
+        fmap = self._get_flag_map()
+        if not fmap:
+            return {}
         menus = {}
-        for name, idx in m.MENU_FLAGS.items():
-            menus[name] = buf[idx] != 0
+        for name, encoded in fmap.items():
+            if isinstance(encoded, int):
+                # New encoding: (byte_idx << 6) | (bit << 1) | open_value
+                open_value = encoded & 1
+                bit = (encoded >> 1) & 0xF
+                byte_idx = encoded >> 6
+                if byte_idx < len(buf):
+                    menus[name] = ((buf[byte_idx] >> bit) & 1) == open_value
+            elif isinstance(encoded, tuple) and len(encoded) == 2:
+                byte_idx, bit = encoded
+                if byte_idx < len(buf):
+                    menus[name] = (buf[byte_idx] >> bit) & 1 != 0
+            elif isinstance(encoded, int) and encoded < len(buf):
+                # Legacy format: byte index only, check non-zero
+                menus[name] = buf[encoded] != 0
         menus["MapShown"] = self.proc.read_u8(ui) != 0
         return menus
 
@@ -630,8 +648,8 @@ class GameReader:
         return 0
 
     def _get_flag_map(self) -> dict[str, int] | None:
-        """Return calibrated flag index map {menu_name: byte_index}.
-        
+        """Return calibrated flag map {menu_name: byte_index}.
+
         Only returns menus that have been calibrated. Uncalibrated menus
         are not included to avoid false positives from wrong default indices.
         """
@@ -642,7 +660,12 @@ class GameReader:
         return None
 
     def open_menus(self) -> dict:
-        """Read the UI panel flags using calibrated struct address + flag map."""
+        """Read the UI panel flags (inventory, stash, vendor, chat, ...).
+
+        Each flag is a specific bit in a byte array. Only calibrated menus are checked.
+        Returns a dict of {menu_name: bool}."""
+        if not self.offsets.UI:
+            return {}
         ui = self._get_ui_base()
         if not ui:
             return {}
@@ -653,37 +676,23 @@ class GameReader:
         if not fmap:
             return {}
         menus = {}
-        # Get baseline (closed) values from config
-        closed_values = self.config.calibrated_ui_closed_values() if self.config else {}
-        for name, idx in fmap.items():
-            if idx >= len(buf):
-                menus[name] = False
-                continue
-            current_val = buf[idx]
-            if name in closed_values:
-                # Compare against baseline: consider "open" if value changes significantly
-                closed_val = closed_values[name]
-                if closed_val == 0:
-                    # If baseline was 0, any non-zero is open
-                    menus[name] = current_val != 0
-                else:
-                    # Check for significant change in either direction
-                    diff = abs(current_val - closed_val)
-                    # Threshold: 25% of closed value or 20, whichever is larger
-                    threshold = max(20, closed_val // 4)
-                    menus[name] = diff > threshold
-            else:
-                # Fallback: non-zero check
-                menus[name] = current_val != 0
+        for name, value in fmap.items():
+            if isinstance(value, tuple) and len(value) == 2:
+                byte_idx, bit = value
+                if byte_idx < len(buf):
+                    menus[name] = (buf[byte_idx] >> bit) & 1 != 0
+            elif isinstance(value, int) and value < len(buf):
+                # Legacy format: byte index only, check non-zero
+                menus[name] = buf[value] != 0
         menus["MapShown"] = self.proc.read_u8(ui) != 0
         return menus
 
-    def calibrate_ui(self, progress_cb: callable = None) -> dict | None:
-        """Interactive UI calibration - detects Inventory flag index by watching changes.
+def calibrate_ui(self, progress_cb: callable = None) -> dict | None:
+        """Interactive UI calibration - detects Inventory flag using known index.
 
         Simple process:
         1. Baseline (all menus closed)
-        2. Open Inventory -> detect which index changes
+        2. Open Inventory -> verify known index works
         3. Close Inventory -> verify
 
         Returns dict with 'address' and 'flags' {menu_name: byte_index}.
@@ -716,51 +725,58 @@ class GameReader:
         # Open Inventory
         if progress_cb:
             progress_cb(f"open:{menu_name}")
-        time.sleep(3.0)  # user opens inventory
+        time.sleep(3.0)
         buf_open = self.proc.read_bytes(ui - 0xA, 0x16D)
         if len(buf_open) != 0x16D:
             return None
 
-        # Find ALL indices that changed (not just 0->non-zero)
-        changed = [(i, buf_base[i], buf_open[i]) for i in range(0x16D) if buf_base[i] != buf_open[i]]
-        if not changed:
-            # Fallback to default index
-            from . import models as m
-            fmap = {menu_name: m.MENU_FLAGS.get(menu_name, 0)}
-        else:
-            # Pick the index with the largest change magnitude (most reliable)
-            # Prefer indices that went 0->non-zero, but accept any significant change
-            best_idx = None
-            best_score = -1
-            for idx, old_val, new_val in changed:
-                score = abs(new_val - old_val)
-                if old_val == 0 and new_val != 0:
-                    score += 100  # strong preference for 0->non-zero
-                if score > best_score:
-                    best_score = score
-                    best_idx = idx
+        # Use the known Inventory index from MENU_FLAGS (Inventory = 1)
+        idx = m.MENU_FLAGS.get(menu_name, 1)
+        if idx < 0x16D and buf_base[idx] != buf_open[idx]:
+            # Known index works - use it
+            fmap = {menu_name: idx}
+            if progress_cb:
+                progress_cb(f"close:{menu_name}")
+            time.sleep(2.0)
+            return {"address": ui, "flags": fmap}
 
-            if best_idx is not None:
-                fmap = {menu_name: best_idx}
-            else:
-                from . import models as m
-                fmap = {menu_name: m.MENU_FLAGS.get(menu_name, 0)}
+        # Fallback: scan for a byte that changes from 0 to non-zero
+        candidate_bytes = []
+        for byte_idx in range(0x16D):
+            if buf_base[byte_idx] == 0 and buf_open[byte_idx] != 0:
+                candidate_bytes.append(byte_idx)
+
+        if not candidate_bytes:
+            # Fallback: any byte that changed
+            for byte_idx in range(0x16D):
+                if buf_base[byte_idx] != buf_open[byte_idx]:
+                    candidate_bytes.append(byte_idx)
+
+        if not candidate_bytes:
+            default_idx = m.MENU_FLAGS.get(menu_name, 0)
+            return {"address": ui, "flags": {menu_name: default_idx}}
 
         # Close Inventory
         if progress_cb:
             progress_cb(f"close:{menu_name}")
         time.sleep(2.0)
-
-        # Verify final baseline (all closed)
         buf_final = self.proc.read_bytes(ui - 0xA, 0x16D)
         if len(buf_final) != 0x16D:
             return None
 
-        # Store baseline values for open_menus comparison
-        closed_values = {menu_name: buf_base[best_idx] if best_idx is not None else buf_base[m.MENU_FLAGS.get(menu_name, 0)]}
-        return {"address": ui, "flags": fmap, "closed_values": closed_values}
+        # Verify candidate returns to 0
+        verified = []
+        for byte_idx in candidate_bytes:
+            if buf_final[byte_idx] == 0:
+                verified.append(byte_idx)
 
-    # ----------------------------------------------------------- snapshot
+        if verified:
+            fmap = {menu_name: verified[0]}
+            return {"address": ui, "flags": fmap}
+
+        # Fallback: use first candidate
+        fmap = {menu_name: candidate_bytes[0]}
+        return {"address": ui, "flags": fmap}
     def snapshot(self) -> m.PlayerSnapshot:
         """Read one frame of player/merc/menu state.
 

@@ -413,6 +413,9 @@ class AppConfig:
             ratio = data.get("ratio")
             if isinstance(ratio, dict):
                 cfg.ratio.update({str(k): v for k, v in ratio.items()})
+            overrides = data.get("overrides")
+            if isinstance(overrides, dict):
+                cfg.overrides.update({str(k): v for k, v in overrides.items()})
             return cfg
         except Exception:
             return cls()
@@ -602,15 +605,33 @@ class AppConfig:
         self.save()
 
     def calibrated_ui_flags(self) -> dict[str, int] | None:
-        """Persisted menu flag index map {menu_name: byte_index}."""
+        """Persisted menu flag map {menu_name: encoded_flag}.
+        
+        Encoding: (byte_idx << 6) | (bit << 1) | open_value
+        """
         fmap = self.overrides.get("calibrated_ui_flags")
         if isinstance(fmap, dict):
             return {str(k): int(v) for k, v in fmap.items()}
         return None
 
     def set_calibrated_ui_flags(self, fmap: dict[str, int]) -> None:
-        """Store the calibrated menu flag index map."""
+        """Store the calibrated menu flag map {menu_name: encoded_flag}.
+        
+        Encoding: (byte_idx << 6) | (bit << 1) | open_value
+        """
         self.overrides["calibrated_ui_flags"] = {str(k): int(v) for k, v in fmap.items()}
+        self.save()
+
+    def calibrated_ui_closed_values(self) -> dict[str, int]:
+        """Persisted baseline (closed) values for calibrated menu flags."""
+        val = self.overrides.get("calibrated_ui_closed_values")
+        if isinstance(val, dict):
+            return {str(k): int(v) for k, v in val.items()}
+        return {}
+
+    def set_calibrated_ui_closed_values(self, vals: dict[str, int]) -> None:
+        """Store the baseline (closed) values for calibrated menu flags."""
+        self.overrides["calibrated_ui_closed_values"] = {str(k): int(v) for k, v in vals.items()}
         self.save()
 
     # ---------------------------------------------------- override tables

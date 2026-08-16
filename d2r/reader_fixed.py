@@ -653,28 +653,8 @@ class GameReader:
         if not fmap:
             return {}
         menus = {}
-        # Get baseline (closed) values from config
-        closed_values = self.config.calibrated_ui_closed_values() if self.config else {}
         for name, idx in fmap.items():
-            if idx >= len(buf):
-                menus[name] = False
-                continue
-            current_val = buf[idx]
-            if name in closed_values:
-                # Compare against baseline: consider "open" if value changes significantly
-                closed_val = closed_values[name]
-                if closed_val == 0:
-                    # If baseline was 0, any non-zero is open
-                    menus[name] = current_val != 0
-                else:
-                    # Check for significant change in either direction
-                    diff = abs(current_val - closed_val)
-                    # Threshold: 25% of closed value or 20, whichever is larger
-                    threshold = max(20, closed_val // 4)
-                    menus[name] = diff > threshold
-            else:
-                # Fallback: non-zero check
-                menus[name] = current_val != 0
+            menus[name] = buf[idx] != 0 if idx < len(buf) else False
         menus["MapShown"] = self.proc.read_u8(ui) != 0
         return menus
 
@@ -756,9 +736,7 @@ class GameReader:
         if len(buf_final) != 0x16D:
             return None
 
-        # Store baseline values for open_menus comparison
-        closed_values = {menu_name: buf_base[best_idx] if best_idx is not None else buf_base[m.MENU_FLAGS.get(menu_name, 0)]}
-        return {"address": ui, "flags": fmap, "closed_values": closed_values}
+        return {"address": ui, "flags": fmap}
 
     # ----------------------------------------------------------- snapshot
     def snapshot(self) -> m.PlayerSnapshot:

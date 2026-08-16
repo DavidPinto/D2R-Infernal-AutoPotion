@@ -146,6 +146,13 @@ def resolve_modifier(name: str) -> int | None:
     return MODIFIER_KEYS.get(str(name).strip().upper())
 
 
+def keysym_to_key_name(code: int) -> str:
+    """Return the key name for a given virtual-key code (for display)."""
+    if code in VK_NAME:
+        return VK_NAME[code]
+    return f"0x{code:X}"
+
+
 def press_key(vk: int, modifier: str | None = None) -> bool:
     """Press (and release) a virtual key, optionally while holding a modifier.
 
