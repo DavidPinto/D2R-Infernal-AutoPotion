@@ -378,8 +378,13 @@ class GameReader:
             if not entries or not (0 <= col_idx < len(counts.columns)):
                 continue
             column = counts.columns[col_idx]
-            column.count = len(entries)
-            next_txt = min(entries, key=lambda e: e[0])[1]   # lowest slot = next drunk
+            # Only potions in row 0 (slot_x 0-3) are drinkable via key press
+            row0_entries = [e for e in entries if e[0] < 4]
+            column.count = len(row0_entries)
+            if not row0_entries:
+                continue
+            # The drinkable potion is the one in row 0 (lowest slot_x in row 0)
+            next_txt = min(row0_entries, key=lambda e: e[0])[1]
             column.txt = next_txt
             column.kind = self.codes.kind(next_txt)
             column.grade = self.codes.grade(next_txt)
