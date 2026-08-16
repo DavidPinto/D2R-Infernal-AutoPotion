@@ -5,6 +5,29 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.7-beta] - 2026-08-15
+
+### Added
+- **Configurable override tables** for all hardcoded game data tables.
+  - Class heal/mana groups (which class gets which restore column)
+  - Rejuv restore percentages
+  - Belt rows mapping (txtFileNo → rows)
+  - Per-potion restore/duration overrides (via Calibrate tab combos)
+  - Persisted in config under `overrides`, applied automatically
+- `PotionEntry` now supports `restore_override` (per class group) and
+  `duration_override` — stored in combo potions, used instead of built-in tables
+
+### Changed
+- `PotionCodes` accepts optional override tables (`class_heal_group`,
+  `class_mana_group`, `rejuv_restore_percent`) — injected from config
+- `default_potion_codes()` and `potion_codes()` accept/forward override tables
+- Config stores override tables in `overrides` dict; accessors added
+- Potion restore/duration now checks: per-entry override → config override → built-in
+
+### Fixed
+- Config accessors now use `overrides` dict (was broken `_data` reference)
+- All hardcoded game data tables now overridable — minor patches won't break users
+
 ## [1.8.6-beta] - 2026-08-15
 
 ### Added

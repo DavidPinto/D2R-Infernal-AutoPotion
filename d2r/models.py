@@ -194,6 +194,10 @@ class PotionEntry:
     txt: int
     kind: str      # "heal" | "mana" | "rejuv" | "other"
     grade: int     # 0-based within kind; -1 for "other"
+    # Optional custom restore/duration override (per txtFileNo)
+    # If provided, these override the built-in tables for this specific txt.
+    restore_override: dict[int, int] | None = None  # {class_group: restore}
+    duration_override: float | None = None
 
 
 class PotionCodes:
@@ -202,14 +206,22 @@ class PotionCodes:
     Built from a list of :class:`PotionEntry` (empty -> unknown potions are
     ignored, never mis-classified).  The built-in Infernal codes are produced by
     :func:`default_potion_codes`; the Calibrate tab replaces that table with the
-    user's own codes for their game version/mods."""
-    def __init__(self, entries: list[PotionEntry] | None = None):
+    user's own codes for their game version/mods.
+
+    Optional override tables (from config) allow per-build customization without
+    code changes: class groups, rejuv %, custom restore/duration per txtFileNo."""
+    def __init__(self, entries: list[PotionEntry] | None = None,
+                 class_heal_group: dict[str, int] | None = None,
+                 class_mana_group: dict[str, int] | None = None,
+                 rejuv_restore_percent: tuple[int, int] | None = None):
         self.entries: dict[int, PotionEntry] = {}
         for e in entries or []:
             if e.kind in POTION_KINDS and (e.grade >= 0 or e.kind == "other"):
                 self.entries[e.txt] = e
-        # Class used for restore amounts when none is passed per call; the
-        # reader refreshes it from the player snapshot on every tick.
+        # Optional override tables (None = use built-in defaults)
+        self._class_heal_group = class_heal_group
+        self._class_mana_group = class_mana_group
+        self._rejuv_restore_percent = rejuv_restore_percent
         self.player_class: str = ""
 
     def kind(self, txt: int) -> str | None:
@@ -223,6 +235,10 @@ class PotionCodes:
     def _group(self, kind: str, player_class: str) -> int:
         """Restore group (0..2) for a kind; unknown class -> middle group."""
         pc = (player_class or self.player_class or "")
+        if kind == "heal" and self._class_heal_group:
+            return self._class_heal_group.get(pc, 1)
+        if kind == "mana" and self._class_mana_group:
+            return self._class_mana_group.get(pc, 1)
         return CLASS_GROUPS.get(kind, {}).get(pc, 1)
 
     def restore(self, txt: int, max_value: int, player_class: str = "") -> int:
@@ -231,6 +247,14 @@ class PotionCodes:
         if not e:
             return 0
         if e.kind == "rejuv":
+            if e.restore_override:
+                grp = self._group("rejuv", player_class)
+                if grp in e.restore_override:
+                    return e.restore_override[grp]
+            # Per-entry override takes priority, then config, then built-in
+            pct = e.restore_override or self._rejuv_restore_percent
+            if pct and 0 <= e.grade < len(pct):
+                return max(0, int(max_value * pct[e.grade] / 100))
             if 0 <= e.grade < len(REJUV_RESTORE_PERCENT):
                 return max(0, int(max_value * REJUV_RESTORE_PERCENT[e.grade] / 100))
             return 0
@@ -244,6 +268,8 @@ class PotionCodes:
         e = self.entries.get(txt)
         if not e or e.kind == "rejuv":
             return 0.0
+        if e.duration_override is not None:
+            return e.duration_override
         row = POTION_TABLES.get(e.kind)
         if row and 0 <= e.grade < len(row):
             return row[e.grade][0]
@@ -269,15 +295,26 @@ class PotionCodes:
         return ["rejuv", "full rejuv"]
 
 
-def default_potion_codes() -> PotionCodes:
-    """The built-in Infernal Edition potion table (single source of truth)."""
+def default_potion_codes(
+    class_heal_group: dict[str, int] | None = None,
+    class_mana_group: dict[str, int] | None = None,
+    rejuv_restore_percent: tuple[int, int] | None = None,
+) -> PotionCodes:
+    """The built-in Infernal Edition potion table (single source of truth).
+
+    Optional override tables allow per-build customization without code changes."""
     entries: list[PotionEntry] = []
     for kind, txts in POTION_GRADES.items():
         for grade, txt in enumerate(txts):
             entries.append(PotionEntry(txt=txt, kind=kind, grade=grade))
     for txt in POTION_TXTFILE_OTHER:
         entries.append(PotionEntry(txt=txt, kind="other", grade=-1))
-    return PotionCodes(entries)
+    return PotionCodes(
+        entries,
+        class_heal_group=class_heal_group,
+        class_mana_group=class_mana_group,
+        rejuv_restore_percent=rejuv_restore_percent,
+    )
 
 
 def belt_corner_codes(slots: dict) -> set[int]:
@@ -381,7 +418,9 @@ def solve_grid_mapping(samples, cell: float | None = None) -> tuple[float, float
 
 
 def potion_entries_from_lists(rows) -> list[PotionEntry]:
-    """Build PotionEntry objects from persisted [[txt, kind, grade], ...] rows.
+    """Build PotionEntry objects from persisted rows.
+    Accepts both legacy [[txt, kind, grade], ...] and new
+    [[txt, kind, grade, restore_override, duration_override], ...] formats.
     Invalid rows are dropped; later rows override earlier ones for a txt."""
     out: list[PotionEntry] = []
     for row in rows or []:
@@ -389,10 +428,19 @@ def potion_entries_from_lists(rows) -> list[PotionEntry]:
             txt = int(row[0])
             kind = str(row[1]).strip().lower()
             grade = int(row[2])
+            restore_override = None
+            duration_override = None
+            if len(row) > 3 and row[3]:
+                if isinstance(row[3], dict):
+                    restore_override = {int(k): int(v) for k, v in row[3].items()}
+            if len(row) > 4 and row[4] is not None:
+                duration_override = float(row[4])
         except (TypeError, ValueError, IndexError):
             continue
         if kind in POTION_KINDS and (grade >= 0 or kind == "other"):
-            out.append(PotionEntry(txt=txt, kind=kind, grade=grade))
+            out.append(PotionEntry(txt=txt, kind=kind, grade=grade,
+                                    restore_override=restore_override,
+                                    duration_override=duration_override))
     return out
 
 

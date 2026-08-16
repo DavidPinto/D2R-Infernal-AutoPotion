@@ -36,7 +36,11 @@ class GameReader:
         the active combo in config when a user calibrates a different build."""
         self.proc = proc
         self.config = config
-        self.codes: m.PotionCodes = codes if codes is not None else m.default_potion_codes()
+        self.codes: m.PotionCodes = codes if codes is not None else m.default_potion_codes(
+            class_heal_group=config.class_heal_group() or None,
+            class_mana_group=config.class_mana_group() or None,
+            rejuv_restore_percent=config.rejuv_restore_percent(),
+        )
         self.merc_txtfiles: frozenset = merc_txtfiles if merc_txtfiles is not None else m.MERC_TXTFILES_DEFAULT
         self.offsets: Offsets = calculate_offsets(proc)
         # A signature hit can be a false positive (e.g. a coincidental byte match

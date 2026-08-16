@@ -176,6 +176,8 @@ class AppConfig:
     refill: dict = field(default_factory=lambda: dict(DEFAULTS["refill"]))
     layout: dict = field(default_factory=lambda: dict(DEFAULTS["layout"]))
     ratio: dict = field(default_factory=lambda: dict(DEFAULTS["ratio"]))
+    # Override tables (calibration/per-build customization)
+    overrides: dict = field(default_factory=dict)
 
     # ----------------------------------------------------------- accessors
     # All accessors fall back to the factory default if a key is missing from
@@ -500,14 +502,20 @@ class AppConfig:
         return body if isinstance(body, dict) else None
 
     def potion_codes(self) -> "m.PotionCodes":
-        """Potion table for the active combo, or the built-in Infernal defaults."""
+        """Potion table for the active combo, or the built-in Infernal defaults.
+
+        Passes config overrides (class groups, rejuv %) when using built-in codes."""
         from . import models as m
         body = self.active_combo()
         if body:
             entries = m.potion_entries_from_lists(body.get("potions"))
             if entries:
                 return m.PotionCodes(entries)
-        return m.default_potion_codes()
+        return m.default_potion_codes(
+            class_heal_group=self.class_heal_group() or None,
+            class_mana_group=self.class_mana_group() or None,
+            rejuv_restore_percent=self.rejuv_restore_percent(),
+        )
 
     def merc_txtfiles_set(self) -> frozenset:
         """Hireling txtFileNos for the active combo, or the built-in default."""
@@ -527,15 +535,29 @@ class AppConfig:
 
     def save_combo(self, name: str, potions: list | None = None,
                    merc: list | None = None, notes: str = "") -> bool:
-        """Persist a named combo (potions as [[txt, kind, grade], ...]) and make
-        it active.  Returns False when the name is empty."""
+        """Persist a named combo with optional restore/duration overrides.
+
+        ``potions`` can be either:
+        - Legacy format: [[txt, kind, grade], ...]
+        - New format: [[txt, kind, grade, {group: restore}, duration], ...]
+          where restore is {class_group: restore} and duration is float.
+        """
         name = str(name).strip()
         if not name:
             return False
         rows = []
         for r in (potions or []):
             try:
-                rows.append([int(r[0]), str(r[1]).strip(), int(r[2])])
+                txt = int(r[0])
+                kind = str(r[1]).strip().lower()
+                grade = int(r[2])
+                restore_override = None
+                duration_override = None
+                if len(r) > 3 and isinstance(r[3], dict):
+                    restore_override = {int(k): int(v) for k, v in r[3].items()}
+                if len(r) > 4 and r[4] is not None:
+                    duration_override = float(r[4])
+                rows.append([txt, kind, grade, restore_override, duration_override])
             except (TypeError, ValueError, IndexError):
                 continue
         merc_ids = []
@@ -552,6 +574,7 @@ class AppConfig:
         self.combo = name
         self.save()
         return True
+
 
     def set_active_combo(self, name: str) -> bool:
         """Switch the active combo ("" resets to built-in defaults)."""
@@ -587,5 +610,41 @@ class AppConfig:
 
     def set_calibrated_ui_flags(self, fmap: dict[str, int]) -> None:
         """Store the calibrated menu flag index map."""
-        self._data["calibrated_ui_flags"] = {str(k): int(v) for k, v in fmap.items()}
+        self.overrides["calibrated_ui_flags"] = {str(k): int(v) for k, v in fmap.items()}
+        self.save()
+
+    # ---------------------------------------------------- override tables
+    def class_heal_group(self) -> dict[str, int]:
+        """Class -> heal restore group (0/1/2).  Empty = built-in defaults."""
+        return self.overrides.get("class_heal_group", {})
+
+    def set_class_heal_group(self, mapping: dict[str, int]) -> None:
+        self.overrides["class_heal_group"] = {str(k): int(v) for k, v in mapping.items()}
+        self.save()
+
+    def class_mana_group(self) -> dict[str, int]:
+        """Class -> mana restore group (0/1/2).  Empty = built-in defaults."""
+        return self.overrides.get("class_mana_group", {})
+
+    def set_class_mana_group(self, mapping: dict[str, int]) -> None:
+        self.overrides["class_mana_group"] = {str(k): int(v) for k, v in mapping.items()}
+        self.save()
+
+    def rejuv_restore_percent(self) -> tuple[int, int] | None:
+        """Rejuv restore % for grades 0 and 1 (e.g. (35, 100)).  None = built-in."""
+        val = self.overrides.get("rejuv_restore_percent")
+        if isinstance(val, (list, tuple)) and len(val) == 2:
+            return (int(val[0]), int(val[1]))
+        return None
+
+    def set_rejuv_restore_percent(self, pct: tuple[int, int] | list[int]) -> None:
+        self.overrides["rejuv_restore_percent"] = [int(pct[0]), int(pct[1])]
+        self.save()
+
+    def belt_rows(self) -> dict[int, int]:
+        """txtFileNo -> belt rows mapping.  Empty = built-in defaults."""
+        return self.overrides.get("belt_rows", {})
+
+    def set_belt_rows(self, mapping: dict[int, int]) -> None:
+        self.overrides["belt_rows"] = {int(k): int(v) for k, v in mapping.items()}
         self.save()
