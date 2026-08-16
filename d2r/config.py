@@ -594,16 +594,16 @@ class AppConfig:
 
     def calibrated_ui_address(self) -> int:
         """Persisted live UI struct base address (0 if not calibrated)."""
-        return int(self._data.get("calibrated_ui_address", 0))
+        return int(self.overrides.get("calibrated_ui_address", 0))
 
     def set_calibrated_ui_address(self, addr: int) -> None:
         """Store the calibrated UI struct base address."""
-        self._data["calibrated_ui_address"] = int(addr)
+        self.overrides["calibrated_ui_address"] = int(addr)
         self.save()
 
     def calibrated_ui_flags(self) -> dict[str, int] | None:
         """Persisted menu flag index map {menu_name: byte_index}."""
-        fmap = self._data.get("calibrated_ui_flags")
+        fmap = self.overrides.get("calibrated_ui_flags")
         if isinstance(fmap, dict):
             return {str(k): int(v) for k, v in fmap.items()}
         return None
