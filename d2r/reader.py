@@ -657,14 +657,15 @@ class GameReader:
         return menus
 
     def calibrate_ui(self, progress_cb: callable = None) -> dict | None:
-        """Interactive UI calibration - detects flag indices by watching changes.
+        """Interactive UI calibration - detects Inventory flag index by watching changes.
 
         Simple process:
         1. Baseline (all menus closed)
-        2. For each menu: open -> detect which indices change
-        3. Close menu -> verify
+        2. Open Inventory -> detect which index changes
+        3. Close Inventory -> verify
 
         Returns dict with 'address' and 'flags' {menu_name: byte_index}.
+        Only Inventory is calibrated (most common/needed); other menus use defaults.
         """
         from . import models as m
 
@@ -687,37 +688,29 @@ class GameReader:
         if len(buf_base) != 0x16D:
             return None
 
-        # Calibrate core menus (the ones that matter for pause/refill)
-        core_menus = ["Inventory", "Stash", "Character", "SkillTree", "NPCShop", "Cube", "Waypoint"]
-        fmap = {}
+        # Calibrate Inventory only (most common/needed)
+        menu_name = "Inventory"
+        
+        # Open Inventory
+        if progress_cb:
+            progress_cb(f"open:{menu_name}")
+        time.sleep(3.0)  # user opens inventory
+        buf_open = self.proc.read_bytes(ui - 0xA, 0x16D)
+        if len(buf_open) != 0x16D:
+            return None
 
-        for menu_name in core_menus:
-            # Open menu
-            if progress_cb:
-                progress_cb(f"open:{menu_name}")
-            time.sleep(3.0)  # user opens menu
-            buf_open = self.proc.read_bytes(ui - 0xA, 0x16D)
-            if len(buf_open) != 0x16D:
-                return None
-
-            # Find ALL indices that changed (not just 0->non-zero)
-            changed = [(i, buf_base[i], buf_open[i]) for i in range(0x16D) if buf_base[i] != buf_open[i]]
-            if not changed:
-                # Fallback to default index
-                from . import models as m
-                fmap[menu_name] = m.MENU_FLAGS.get(menu_name, 0)
-                # Still need to wait for close
-                if progress_cb:
-                    progress_cb(f"close:{menu_name}")
-                time.sleep(2.0)
-                continue
-
+        # Find ALL indices that changed (not just 0->non-zero)
+        changed = [(i, buf_base[i], buf_open[i]) for i in range(0x16D) if buf_base[i] != buf_open[i]]
+        if not changed:
+            # Fallback to default index
+            from . import models as m
+            fmap = {menu_name: m.MENU_FLAGS.get(menu_name, 0)}
+        else:
             # Pick the index with the largest change magnitude (most reliable)
             # Prefer indices that went 0->non-zero, but accept any significant change
             best_idx = None
             best_score = -1
             for idx, old_val, new_val in changed:
-                # Score: prefer 0->non-zero, then larger absolute change
                 score = abs(new_val - old_val)
                 if old_val == 0 and new_val != 0:
                     score += 100  # strong preference for 0->non-zero
@@ -726,26 +719,22 @@ class GameReader:
                     best_idx = idx
 
             if best_idx is not None:
-                fmap[menu_name] = best_idx
+                fmap = {menu_name: best_idx}
             else:
                 from . import models as m
-                fmap[menu_name] = m.MENU_FLAGS.get(menu_name, 0)
+                fmap = {menu_name: m.MENU_FLAGS.get(menu_name, 0)}
 
-            # Close menu
-            if progress_cb:
-                progress_cb(f"close:{menu_name}")
-            time.sleep(2.0)
-            # Update baseline for next menu
-            buf_base = self.proc.read_bytes(ui - 0xA, 0x16D)
-            if len(buf_base) != 0x16D:
-                return None
+        # Close Inventory
+        if progress_cb:
+            progress_cb(f"close:{menu_name}")
+        time.sleep(2.0)
 
         # Verify final baseline (all closed)
         buf_final = self.proc.read_bytes(ui - 0xA, 0x16D)
         if len(buf_final) != 0x16D:
             return None
 
-        # Add non-core menus with default indices
+        # Add other menus with default indices
         from . import models as m
         for name, idx in m.MENU_FLAGS.items():
             if name not in fmap:

@@ -1201,15 +1201,15 @@ class MainApp(ctk.CTk):
 
     def _format_calib_step(self, step: str) -> str:
         if step == "base":
-            return "Step 1/15: Finding UI struct… (close all panels)"
+            return "Step 1/3: Finding UI struct… (close all panels)"
         if step == "baseline":
-            return "Step 2/15: CLOSE ALL menus (inventory, stash, char, etc.) — waiting 2s"
+            return "Step 2/3: CLOSE ALL menus — waiting 2s"
         if step.startswith("open:"):
             menu = step.split(":", 1)[1].capitalize()
-            return f"OPEN {menu} now… (3s)"
+            return f"Step 3/3: OPEN {menu} now… (3s)"
         if step.startswith("close:"):
             menu = step.split(":", 1)[1].capitalize()
-            return f"CLOSE {menu} now… (2s)"
+            return f"Step 3/3: CLOSE {menu} now… (2s)"
         return step
 
     def _refresh_learned(self):
