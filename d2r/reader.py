@@ -37,9 +37,9 @@ class GameReader:
         self.proc = proc
         self.config = config
         self.codes: m.PotionCodes = codes if codes is not None else m.default_potion_codes(
-            class_heal_group=config.class_heal_group() or None,
-            class_mana_group=config.class_mana_group() or None,
-            rejuv_restore_percent=config.rejuv_restore_percent(),
+            class_heal_group=config.class_heal_group() if config else None,
+            class_mana_group=config.class_mana_group() if config else None,
+            rejuv_restore_percent=config.rejuv_restore_percent() if config else None,
         )
         self.merc_txtfiles: frozenset = merc_txtfiles if merc_txtfiles is not None else m.MERC_TXTFILES_DEFAULT
         self.offsets: Offsets = calculate_offsets(proc)
@@ -659,9 +659,9 @@ class GameReader:
     def calibrate_ui(self, progress_cb: callable = None) -> dict | None:
         """Interactive UI calibration - detects flag indices by watching changes.
 
-        Simple 3-step process per menu:
-        1. Baseline (all closed)
-        2. Open menu -> detect which indices change
+        Simple process:
+        1. Baseline (all menus closed)
+        2. For each menu: open -> detect which indices change
         3. Close menu -> verify
 
         Returns dict with 'address' and 'flags' {menu_name: byte_index}.
@@ -679,19 +679,19 @@ class GameReader:
         if len(test) != 0x16D:
             return None
 
+        # Single baseline: all menus closed
+        if progress_cb:
+            progress_cb("baseline")
+        time.sleep(2.0)
+        buf_base = self.proc.read_bytes(ui - 0xA, 0x16D)
+        if len(buf_base) != 0x16D:
+            return None
+
         # Calibrate core menus (the ones that matter for pause/refill)
         core_menus = ["Inventory", "Stash", "Character", "SkillTree", "NPCShop", "Cube", "Waypoint"]
         fmap = {}
 
         for menu_name in core_menus:
-            # Baseline: all closed
-            if progress_cb:
-                progress_cb(f"baseline:{menu_name}")
-            time.sleep(0.5)
-            buf_base = self.proc.read_bytes(ui - 0xA, 0x16D)
-            if len(buf_base) != 0x16D:
-                return None
-
             # Open menu
             if progress_cb:
                 progress_cb(f"open:{menu_name}")
