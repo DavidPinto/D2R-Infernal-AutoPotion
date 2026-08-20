@@ -5,6 +5,21 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0-beta] - 2026-08-16
+
+### Added
+- **Gamepad/controller support** (Keys tab).  When enabled, the app sends
+  XInput gamepad D-pad presses instead of keyboard keys for belt actions.
+  Maps: Q=Left, W=Up, E=Down, R=Right.  Requires XInput-compatible controller.
+  Controller index configurable (0-3).  UI checkbox with descriptive hint.
+
+### Changed
+- Fixed gamepad D-pad mapping to match game defaults (Left, Up, Down, Right)
+  instead of previous incorrect mapping.  UI hint text updated accordingly.
+
+### Fixed
+- Menu detection now only reports calibrated menus (no false positives)
+
 ## [1.8.8-beta] - 2026-08-16
 
 ### Added
