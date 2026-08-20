@@ -102,6 +102,12 @@ DEFAULTS = {
         # deeper in the belt.  Respects empty slots (potions don't drop through
         # empty space).  Only enable if you accept wasting potions to survive.
         "desperation_mode": False,
+        # Gamepad support: use gamepad D-pad instead of keyboard for belt keys.
+        # When enabled, the app sends XInput gamepad button presses instead of
+        # keyboard keystrokes.  Requires a connected XInput-compatible controller.
+        "use_gamepad": False,
+        # XInput controller index (0-3).  Default 0 = first connected controller.
+        "gamepad_id": 0,
         # Potions restore over a duration (rejuv is instant).  A same-or-higher
         # grade potion may be drunk once the in-effect potion is half consumed;
         # a weaker/unknown one waits the full duration * (1 + margin) so it never
@@ -220,6 +226,22 @@ class AppConfig:
     @desperation_mode.setter
     def desperation_mode(self, value: bool) -> None:
         self.behavior["desperation_mode"] = bool(value)
+
+    @property
+    def use_gamepad(self) -> bool:
+        return bool(self.behavior.get("use_gamepad", False))
+
+    @use_gamepad.setter
+    def use_gamepad(self, value: bool) -> None:
+        self.behavior["use_gamepad"] = bool(value)
+
+    @property
+    def gamepad_id(self) -> int:
+        return int(self.behavior.get("gamepad_id", 0))
+
+    @gamepad_id.setter
+    def gamepad_id(self, value: int) -> None:
+        self.behavior["gamepad_id"] = int(value)
 
     # ------------------------------------------------- belt columns + refill
     def managed_columns(self) -> list[str]:

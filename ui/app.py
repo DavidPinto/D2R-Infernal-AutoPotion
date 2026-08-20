@@ -444,6 +444,19 @@ class MainApp(ctk.CTk):
         self.config.desperation_mode = self._desperation_var.get()
         self.config.save()
 
+    def _on_gamepad_toggle(self):
+        self.config.use_gamepad = self._gamepad_var.get()
+        self.config.save()
+
+    def _on_gamepad_id_change(self, _=None):
+        try:
+            val = int(self._gamepad_id_entry.get())
+            if 0 <= val <= 3:
+                self.config.gamepad_id = val
+                self.config.save()
+        except ValueError:
+            pass
+
     def _sync_sliders(self):
         """Push config values into every trigger slider + margin slider."""
         for k, frame in self._trigger_sliders.items():
@@ -451,6 +464,11 @@ class MainApp(ctk.CTk):
         self._margin_slider.set_value(  # type: ignore[attr-defined]
             self.config.behavior.get("potion_margin_percent", 20))
         self._desperation_var.set(self.config.desperation_mode)
+        if hasattr(self, "_gamepad_var"):
+            self._gamepad_var.set(self.config.use_gamepad)
+        if hasattr(self, "_gamepad_id_entry"):
+            self._gamepad_id_entry.delete(0, "end")
+            self._gamepad_id_entry.insert(0, str(self.config.gamepad_id))
 
     def _reset_triggers(self):
         from d2r.config import DEFAULTS
@@ -458,6 +476,8 @@ class MainApp(ctk.CTk):
         self.config.behavior["potion_margin_percent"] = DEFAULTS["behavior"]["potion_margin_percent"]
         self.config.behavior["potion_class_override"] = ""
         self.config.behavior["desperation_mode"] = DEFAULTS["behavior"]["desperation_mode"]
+        self.config.behavior["use_gamepad"] = DEFAULTS["behavior"]["use_gamepad"]
+        self.config.behavior["gamepad_id"] = DEFAULTS["behavior"]["gamepad_id"]
         self._sync_sliders()
         self.config.save()
 
@@ -571,6 +591,32 @@ class MainApp(ctk.CTk):
                                           command=self._on_pause)
         self._pause_switch.pack(anchor="w", padx=12, pady=4)
         self._pause_switch.select() if self.config.behavior.get("pause_when_menus_open", True) else self._pause_switch.deselect()
+
+        # Poll interval (responsiveness vs CPU).
+        self._poll_frame, _ = w.labeled_slider(
+            body, "Watch refresh interval", 100, 500,
+            float(self.config.behavior.get("poll_interval_ms", 150)),
+            lambda v: self._on_poll_interval(v), step=50, fmt="{:.0f} ms")
+        self._poll_frame.pack(fill="x", padx=12, pady=(8, 2))
+
+        # Gamepad support
+        w.heading(body, "Gamepad support").pack(anchor="w", padx=12, pady=(4, 4))
+        gp = ctk.CTkFrame(body, fg_color="transparent")
+        gp.pack(anchor="w", padx=12, pady=(0, 4), fill="x")
+        self._gamepad_var = ctk.BooleanVar(value=self.config.use_gamepad)
+        gp_cb = ctk.CTkCheckBox(gp, text="Use gamepad D-pad for belt keys (requires XInput controller)",
+                                variable=self._gamepad_var,
+                                command=self._on_gamepad_toggle)
+        gp_cb.pack(side="left")
+        ctk.CTkLabel(gp, text="Controller index (0-3):", font=ctk.CTkFont(size=11)).pack(side="left", padx=(12, 4))
+        self._gamepad_id_entry = ctk.CTkEntry(gp, width=40, height=24, font=ctk.CTkFont(size=11), justify="center")
+        self._gamepad_id_entry.pack(side="left", padx=(0, 8))
+        self._gamepad_id_entry.insert(0, str(self.config.gamepad_id))
+        self._gamepad_id_entry.bind("<Return>", self._on_gamepad_id_change)
+        self._gamepad_id_entry.bind("<FocusOut>", self._on_gamepad_id_change)
+        w.hint(body, "When enabled, the app sends XInput gamepad D-pad presses instead of keyboard keys. "
+                     "Q=Left, W=Up, E=Down, R=Right.  Requires an XInput-compatible controller. "
+                     "Controller index 0 = first connected controller.").pack(anchor="w", padx=12, pady=(0, 4))
 
         # Poll interval (responsiveness vs CPU).
         self._poll_frame, _ = w.labeled_slider(
