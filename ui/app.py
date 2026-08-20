@@ -17,12 +17,10 @@ import threading
 import customtkinter as ctk
 
 from d2r import __version__, models as m
-from d2r import input as input_mod
 from d2r.config import AppConfig, PRESETS
-from d2r.process import Process, ProcessNotFound, find_window_for_pid
+from d2r.process import Process, ProcessNotFound
 from d2r.reader import GameReader
 from d2r.watcher import PotionWatcher
-from d2r.keys import VK
 from d2r.log import EventLog
 from d2r.hotkey import HotkeyListener, parse_hotkey, spec_for
 from d2r.hotkey import keysym_to_key_name, mod_from_keysym as hotkey_mod_from_keysym
@@ -118,10 +116,6 @@ class MainApp(ctk.CTk):
         self._last_connect_attempt = 0.0
         self._last_discover = 0.0
         self._shown_errors: set[str] = set()
-        # Belt-refill click calibration state.
-        self._calib_capture = False
-        self._calib_samples: list = []
-        self._calib_hotkey: HotkeyListener | None = None
 
         self.event_log = EventLog()
         self.hotkey: HotkeyListener | None = None
@@ -739,144 +733,6 @@ class MainApp(ctk.CTk):
             text=f"Belt: {rows * 4} slots ({rows} row{'s' if rows != 1 else ''}), "
                  f"{len(pc.belt_filled)} filled / {len(pc.belt_empty)} free")
 
-    def _toggle_calib_capture(self):
-        if self._calib_capture:
-            self._exit_calib_capture()
-            return
-        if not (self.connected and self.proc is not None and self.reader):
-            self._calib_status.configure(text="Connect to the game first (Dashboard).", text_color=DANGER)
-            return
-        self._calib_capture = True
-        self._calib_samples = []
-        self._calib_btn.configure(text="Stop capture")
-        self._calib_status.configure(
-            text="Capture: open your inventory in-game, hover the mouse over an inventory "
-                 "potion OR a potion on your belt, and press F8.  Repeat on different "
-                 "potion cells (inventory and belt each need two), then click "
-                 "'Finish & save'.", text_color=ACCENT)
-        try:
-            self._calib_hotkey = HotkeyListener(
-                0, VK["F8"], lambda: self.after(0, self._record_calib_sample))
-            if not self._calib_hotkey.start():
-                self._calib_hotkey = None
-                self._calib_status.configure(text="Could not register F8 (already in use?).", text_color=DANGER)
-        except Exception as exc:
-            self._calib_hotkey = None
-            self._calib_status.configure(text=f"Could not register F8: {exc}", text_color=DANGER)
-
-    def _exit_calib_capture(self):
-        self._calib_capture = False
-        self._calib_btn.configure(text="Calibrate…")
-        if self._calib_hotkey:
-            self._calib_hotkey.stop()
-            self._calib_hotkey = None
-        self._refresh_refill_status()
-
-    def _record_calib_sample(self):
-        if not (self._calib_capture and self.reader and self.proc):
-            return
-        unit_id = self.reader.hovered_item_unit()
-        if not unit_id:
-            self._calib_status.configure(
-                text=f"Sample {len(self._calib_samples)}: nothing hovered. Move the mouse onto "
-                     "an inventory or belt potion and press F8 again.", text_color=WARN)
-            return
-        potion = next((p for p in self.reader.inventory_potions()
-                       if p.get("unit_id") == unit_id), None)
-        if potion:
-            hwnd = find_window_for_pid(self.proc.pid)
-            rect = input_mod.window_rect(hwnd) if hwnd else None
-            if not rect:
-                self._calib_status.configure(text="Could not read the game window bounds.", text_color=DANGER)
-                return
-            sx, sy = input_mod.cursor_pos()
-            self._calib_samples.append(
-                ("inv", int(potion["x"]), int(potion["y"]), sx - rect[0], sy - rect[1]))
-            self._calib_status.configure(
-                text=f"Sample {len(self._calib_samples)}: inventory cell ({potion['x']}, {potion['y']}). "
-                     "Press F8 over a different potion (or a belt potion), then 'Finish & save'.",
-                text_color=GOOD)
-            return
-        potion = next((p for p in self.reader.belt_items()
-                       if p.get("unit_id") == unit_id), None)
-        if potion:
-            hwnd = find_window_for_pid(self.proc.pid)
-            rect = input_mod.window_rect(hwnd) if hwnd else None
-            if not rect:
-                self._calib_status.configure(text="Could not read the game window bounds.", text_color=DANGER)
-                return
-            slot = int(potion.get("slot", -1))
-            if slot < 0:
-                self._calib_status.configure(text="Could not read that belt potion's slot.", text_color=WARN)
-                return
-            rows = 1
-            pc = self.watcher.snapshot().potion_counts if self.watcher else m.PotionCounts()
-            if pc.ok:
-                rows = max(1, int(pc.belt_rows))
-            cols = len(m.BELT_COLUMN_KEYS)
-            gx = slot % cols
-            gy = (rows - 1) - (slot // cols)   # belt memory row 0 = UI bottom row
-            sx, sy = input_mod.cursor_pos()
-            self._calib_samples.append(("belt", gx, gy, sx - rect[0], sy - rect[1]))
-            self._calib_status.configure(
-                text=f"Sample {len(self._calib_samples)}: belt slot {slot} (row {gy}, col {gx}). "
-                     "Press F8 over a different potion (or an inventory potion), then "
-                     "'Finish & save'.", text_color=GOOD)
-            return
-        self._calib_status.configure(
-            text="Hovered item is not a potion on the inventory page or the belt.", text_color=WARN)
-
-    def _finish_calib(self):
-        if not self._calib_capture:
-            self._calib_status.configure(text="Start a capture first ('Calibrate…').", text_color=WARN)
-            return
-        inv_samples = [(gx, gy, sx, sy) for t, gx, gy, sx, sy in self._calib_samples if t == "inv"]
-        belt_samples = [(gx, gy, sx, sy) for t, gx, gy, sx, sy in self._calib_samples if t == "belt"]
-        if not inv_samples and not belt_samples:
-            self._calib_status.configure(
-                text="No samples captured. Hover a potion (inventory or belt) and press F8.",
-                text_color=WARN)
-            return
-        existing = self.config.refill_mapping()
-        cell = float(existing.get("cell", 29.0)) if existing.get("calibrated") else None
-        solved = m.solve_grid_mapping(inv_samples, cell=cell) if inv_samples else None
-        if inv_samples and not solved:
-            self._calib_status.configure(
-                text="Could not solve the inventory grid. Capture two inventory potions that "
-                     "are not in the same row and column.", text_color=DANGER)
-            return
-        belt_existing = self.config.belt_refill_mapping()
-        belt_cell = float(belt_existing.get("cell", 29.0)) if belt_existing.get("calibrated") else None
-        if belt_samples and not belt_cell and solved:
-            belt_cell = solved[0]          # reuse the inventory cell size
-        belt_solved = m.solve_grid_mapping(belt_samples, cell=belt_cell) if belt_samples else None
-        if belt_samples and not belt_solved:
-            self._calib_status.configure(
-                text="Could not solve the belt grid. Capture two belt potions that are not in "
-                     "the same row and column.", text_color=DANGER)
-            return
-        msgs = []
-        if solved:
-            c, ox, oy = solved
-            self.config.set_refill_mapping(c, ox, oy)
-            msgs.append(f"inventory cell {c:.1f}px, origin ({ox:.0f}, {oy:.0f})")
-        if belt_solved:
-            c, ox, oy = belt_solved
-            self.config.set_belt_refill_mapping(c, ox, oy)
-            msgs.append(f"belt cell {c:.1f}px, origin ({ox:.0f}, {oy:.0f})")
-        self.config.save()
-        self._exit_calib_capture()
-        self._calib_status.configure(
-            text="Saved: " + "  |  ".join(msgs) + ". Belt refill is ready.", text_color=GOOD)
-
-    def _clear_calib(self):
-        if self._calib_capture:
-            self._exit_calib_capture()
-        self.config.clear_refill_mapping()
-        self.config.clear_belt_refill_mapping()
-        self.config.save()
-        self._refresh_refill_status()
-
     # ------------------------------------------------------- global hotkey
     def _toggle_hotkey_capture(self):
         """Grab a new global enable/disable combo (Esc or Delete clears it)."""
@@ -1444,8 +1300,6 @@ class MainApp(ctk.CTk):
         """Stop the watcher and drop all process/reader references."""
         if self.watcher:
             self.watcher.stop()
-        if self._calib_capture:
-            self._exit_calib_capture()
         self.proc = self.reader = self.watcher = None
         self.connected = False
 
@@ -1486,8 +1340,6 @@ class MainApp(ctk.CTk):
         """Stop the watcher thread + hotkey before the window closes (clean exit)."""
         if self.watcher:
             self.watcher.stop()
-        if self._calib_hotkey:
-            self._calib_hotkey.stop()
         if self.hotkey:
             self.hotkey.stop()
         self.destroy()

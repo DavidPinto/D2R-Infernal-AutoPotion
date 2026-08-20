@@ -991,6 +991,44 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(w._effective_cooldown("heal"), w.config.cooldown("heal"))
         self.assertEqual(w._effective_cooldown("merc_heal"), w.config.cooldown("merc_heal"))
 
+    def test_waste_guard_skips_second_drink_while_first_covers(self):
+        # Super mana (611) restores 375 over 5.12 s.  At 3 s the remaining
+        # restore (375 * (1 - 3/5.12) ~= 155) still covers the 110 deficit,
+        # so the half-duration gate alone would waste a second potion.
+        w = self._watcher()
+        w.config.thresholds["heal_potion_at"] = 30
+        w.config.thresholds["mana_potion_at"] = 60
+        snap = self._belt_snap(hp=190, mana=90, max_hp=200, max_mana=200,
+                               columns=[self._col("R", 611)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "R")])
+        w._last_used["mana"] = time.monotonic() - 3.0
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "R")])
+
+    def test_waste_guard_drinks_when_in_effect_potion_cannot_cover(self):
+        # Deficit 300 > the Super mana's remaining restore (155) -> second drink.
+        w = self._watcher()
+        w.config.thresholds["heal_potion_at"] = 30
+        w.config.thresholds["mana_potion_at"] = 60
+        snap = self._belt_snap(hp=190, mana=100, max_hp=200, max_mana=400,
+                               columns=[self._col("R", 611)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "R")])
+        w._last_used["mana"] = time.monotonic() - 3.0
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "R"), ("mana", "R")])
+
+    def test_waste_guard_never_gates_rejuv(self):
+        # Rejuv is instant-restore: the guard must never hold it back.
+        w = self._watcher()
+        w.config.thresholds["heal_potion_at"] = 30
+        w.config.thresholds["mana_potion_at"] = 60
+        w._last_potion_dur["rejuv"] = 10.0
+        w._last_potion_txt["rejuv"] = 615
+        w._last_used["rejuv"] = time.monotonic() - 2.0
+        self.assertFalse(w._in_effect_covers("rejuv", 50, 200, time.monotonic()))
+
     def test_same_or_higher_grade_allowed_after_half_duration(self):
         w = self._watcher()
         w._last_potion_dur["heal"] = 10.24   # Super heal (606) restore window
@@ -1008,6 +1046,8 @@ class WatcherTests(unittest.TestCase):
         self.assertAlmostEqual(w._effective_cooldown("heal"), 12.288)
 
     def test_tick_repeats_same_grade_after_half_duration(self):
+        # Same-grade potions may be re-drunk past the half-duration gate, but
+        # only when the in-effect potion can no longer cover the deficit alone.
         w = self._watcher()
         snap = self._belt_snap(hp=140, columns=[self._col("Q", 602), self._col("R", 606)])
         w._tick(snap)                                  # drinks Super on R (grade 4)
@@ -1015,6 +1055,11 @@ class WatcherTests(unittest.TestCase):
         w._last_used["heal"] = time.monotonic() - 6.0  # past the 5.12 s half-window
         w.sender.pressed, w.sender.pressed_keys = [], []
         w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [])    # in-effect Super still covers the 60 deficit
+        # A deficit the in-effect potion cannot cover fires the same-grade repeat.
+        w._last_used["heal"] = time.monotonic() - 6.0
+        deep = self._belt_snap(hp=160, max_hp=400, columns=[self._col("Q", 602), self._col("R", 606)])
+        w._tick(deep)
         self.assertEqual(w.sender.pressed_keys, [("heal", "R")])
 
     def test_tick_holds_weaker_grade_until_margin(self):

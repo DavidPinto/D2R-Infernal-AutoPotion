@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit). It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.9.2-beta` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.9.3-beta` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`. See
 > [Limitations](#limitations) below.
 
@@ -192,12 +192,11 @@ If a D2R update breaks the tool (shows "Offsets unresolved"):
 
 *These features exist in code but are **not functional in the current UI**:*
 
-- **Belt refill (auto inventory→belt)** — Hidden in UI; calibration (F8 hover) exists but button hidden
+- **Belt refill (auto inventory→belt)** — Hidden in UI; config mapping accessors kept (no UI)
 - **Belt plan / Layout refill** — 4×4 grid exists in *Keys* tab but refill is disabled; layout stored in config but unused
 - **Legacy "plain tier"** — Removed in v1.8.2; `behavior.smart` retained for compat but unused
 - **Per-potion key bindings (pre-1.8.0)** — Removed; old config keys (`keys.heal`, etc.) kept for compat but ignored
 - **Merc auto-potion** — Experimental; uses same logic but not end-to-end verified
-- **F8 hover calibration** — Code exists (`ui/app.py::_toggle_calib_capture`), button hidden
 - **Legacy `belt_rows_for`** — Hardcoded table; runtime reads equipped belt txtFileNo instead
 - **Legacy potion tables in `models.py`** — Built-in defaults; overridden by Calibrate tab combos
 

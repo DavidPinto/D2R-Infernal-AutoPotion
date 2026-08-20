@@ -5,6 +5,37 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.3-beta] - 2026-08-20
+
+### Fixed
+- **Mana potions were wasted when an in-effect potion would restore fully.**
+  The half-duration cooldown allowed a second same/higher-grade drink while
+  the potion still in effect had enough remaining restore to cover the
+  deficit on its own — e.g. a Super mana potion re-drunk at 3/5.12 s with
+  ~155 mana still to deliver.  The watcher now skips the second drink when
+  the in-effect potion's remaining restore (`total × (1 - elapsed/duration)`)
+  covers the current deficit; rejuv (instant) is never gated by this.
+  The old same-grade-repeat test now asserts the skip, plus a repeat fires
+  when the in-effect potion can no longer cover the deficit.
+
+### Cleanup (deferred-issue pass — cleanup policy now allows dead-code removal)
+- `d2r/reader.py`: removed the shadowed dead copies of `open_menus` and
+  `_get_ui_base` (the calibrated-only versions were already the live ones).
+- `ui/app.py`: removed the unreachable refill-clicker calibration code
+  (`_toggle_calib_capture`, `_exit_calib_capture`, `_record_calib_sample`,
+  `_finish_calib`, `_clear_calib`, the `_calib_capture`/`_calib_samples`/
+  `_calib_hotkey` state, and their dead branches in `_disconnect`/`_on_close`)
+  plus the now-unused `input_mod`/`find_window_for_pid`/`VK` imports.
+- `d2r/process.py`: explicit `argtypes`/`restype` for the Toolhelp snapshot
+  family (`CreateToolhelp32Snapshot`, `Process32First/Next`,
+  `Module32First/Next`) and the user32 window helpers (`EnumWindows`,
+  `IsWindowVisible`, `GetWindowThreadProcessId`, `ShowWindow`,
+  `GetForegroundWindow`, `SetFocus`, `SetForegroundWindow`,
+  `AttachThreadInput`, `GetCurrentThreadId`).
+- `README.md`: dropped the stale "F8 hover calibration" legacy-feature note.
+
+Test suite: **127 tests green**; compileall + headless UI smoke pass.
+
 ## [1.9.2-beta] - 2026-08-20
 
 ### Fixed (full-app code review pass)

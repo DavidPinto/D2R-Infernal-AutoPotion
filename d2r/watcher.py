@@ -68,6 +68,7 @@ class PotionWatcher:
         # the config cooldown for the gate.
         self._last_potion_dur: dict[str, float] = {}
         self._last_potion_grade: dict[str, int] = {}
+        self._last_potion_txt: dict[str, int] = {}
         self._out_of_stock: set[str] = set()   # actions currently reported empty
         self._lock = threading.Lock()
         self._last_snapshot = m.PlayerSnapshot()
@@ -384,6 +385,9 @@ class PotionWatcher:
                 self._out_of_stock.add(action)
                 self._emit("info", f"No {kind} potion left on the belt.", snap)
             return False
+        if isinstance(col, m.BeltColumn) and self._in_effect_covers(
+                action, deficit, max_value, t):
+            return False
         grade = col.grade if isinstance(col, m.BeltColumn) else -1
         if not self._ready(action, t, candidate_grade=grade):
             return False
@@ -441,6 +445,34 @@ class PotionWatcher:
             return duration * self.config.potion_margin()
         return self.config.cooldown(action)
 
+    def _in_effect_covers(self, action: str, deficit: int, max_value: int,
+                          now: float) -> bool:
+        """True when the potion still restoring for ``action`` has enough
+        remaining restore to cover the current deficit.
+
+        Waste guard: heal/mana potions restore over a duration, so the
+        half-duration cooldown is about fill RATE, not need.  Drinking again
+        while the in-effect potion alone would finish the job just burns
+        potions (e.g. a Super mana potion re-drunk at 60% because its total
+        restore would have topped mana up fully)."""
+        if action in ("rejuv", "merc_rejuv"):
+            return False
+        dur = self._last_potion_dur.get(action, 0.0)
+        txt = self._last_potion_txt.get(action, 0)
+        if dur <= 0 or not txt:
+            return False
+        elapsed = now - self._last_used.get(action, 0.0)
+        if elapsed <= 0 or elapsed >= dur:
+            return False
+        codes = getattr(self.reader, "codes", None)
+        if codes is None:
+            return False
+        total = codes.restore(txt, max_value, codes.player_class)
+        if total <= 0:
+            return False
+        remaining = total * (1.0 - elapsed / dur)
+        return remaining >= deficit
+
     def _use(self, action: str, reason: str, snap: m.PlayerSnapshot,
              column: m.BeltColumn | None = None) -> None:
         """Press the key for 'action' (a specific belt column when given) and log
@@ -463,6 +495,7 @@ class PotionWatcher:
                     grade = column.grade
             self._last_potion_dur[action] = duration
             self._last_potion_grade[action] = grade
+            self._last_potion_txt[action] = column.txt if column else 0
             with self._lock:
                 self._potion_uses += 1
                 self._counts[action] = self._counts.get(action, 0) + 1

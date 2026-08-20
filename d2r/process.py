@@ -124,6 +124,16 @@ kernel32.VirtualQueryEx.argtypes = [
     wt.HANDLE, wt.LPCVOID, ctypes.POINTER(MEMORY_BASIC_INFORMATION), ctypes.c_size_t,
 ]
 kernel32.VirtualQueryEx.restype = ctypes.c_size_t
+kernel32.CreateToolhelp32Snapshot.argtypes = [wt.DWORD, wt.DWORD]
+kernel32.Process32First.restype = wt.BOOL
+kernel32.Process32First.argtypes = [wt.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
+kernel32.Process32Next.restype = wt.BOOL
+kernel32.Process32Next.argtypes = [wt.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
+kernel32.Module32First.restype = wt.BOOL
+kernel32.Module32First.argtypes = [wt.HANDLE, ctypes.POINTER(MODULEENTRY32)]
+kernel32.Module32Next.restype = wt.BOOL
+kernel32.Module32Next.argtypes = [wt.HANDLE, ctypes.POINTER(MODULEENTRY32)]
+kernel32.GetCurrentThreadId.restype = wt.DWORD
 
 
 def _process_snapshot() -> list[PROCESSENTRY32]:
@@ -446,6 +456,22 @@ class Process:
 # --- window helpers (used to focus the game before sending keys) -------------
 
 _EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+
+user32.IsWindowVisible.restype = wt.BOOL
+user32.IsWindowVisible.argtypes = [wt.HWND]
+user32.GetWindowThreadProcessId.restype = wt.DWORD
+user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+user32.EnumWindows.restype = wt.BOOL
+user32.EnumWindows.argtypes = [_EnumWindowsProc, wt.LPARAM]
+user32.ShowWindow.restype = wt.BOOL
+user32.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
+user32.GetForegroundWindow.restype = wt.HWND
+user32.SetFocus.restype = wt.HWND
+user32.SetFocus.argtypes = [wt.HWND]
+user32.SetForegroundWindow.restype = wt.BOOL
+user32.SetForegroundWindow.argtypes = [wt.HWND]
+user32.AttachThreadInput.restype = wt.BOOL
+user32.AttachThreadInput.argtypes = [wt.DWORD, wt.DWORD, wt.BOOL]
 
 
 def find_window_for_pid(pid: int) -> int | None:

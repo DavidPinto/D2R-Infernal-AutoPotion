@@ -569,43 +569,6 @@ class GameReader:
             out["error"] = str(exc)
         return out
 
-    # -------------------------------------------------------------- menus
-    def open_menus(self) -> dict:
-        """Read the UI panel flags (inventory, stash, vendor, chat, ...).
-
-        Each flag is a byte in the UI struct; 'MapShown' is a separate byte at
-        the UI base.  Returns a dict of {menu_name: bool}."""
-        ui = self._get_ui_base()
-        if not ui:
-            return {}
-        buf = self.proc.read_bytes(ui - 0xA, 0x16D)
-        if len(buf) != 0x16D:
-            return {}
-        menus = {}
-        for name, idx in m.MENU_FLAGS.items():
-            menus[name] = buf[idx] != 0
-        menus["MapShown"] = self.proc.read_u8(ui) != 0
-        return menus
-
-    def _get_ui_base(self) -> int:
-        """Return the live UI struct base address.
-
-        Uses calibrated address if available, otherwise falls back to signature.
-        The signature (ui-v3) is ambiguous on this build; calibration finds the
-        real heap-allocated UI struct by detecting inventory flag changes."""
-        if hasattr(self, "_ui_base_cached") and self._ui_base_cached:
-            return self._ui_base_cached
-        # Calibrated address from config (set via Calibrate tab)
-        if self.config is not None:
-            calibrated = self.config.calibrated_ui_address()
-            if calibrated:
-                self._ui_base_cached = calibrated
-                return calibrated
-        # Fallback: signature scan result
-        if self.offsets.UI:
-            return self._base() + self.offsets.UI
-        return 0
-
     # -------------------------------------------------------------- menu calibration
     def _get_ui_base(self) -> int:
         """Return the live UI struct base address.
