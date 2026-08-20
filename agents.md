@@ -67,6 +67,12 @@ git add -A && git commit -m "..."      # commit after EVERY completed iteration
 
 ## Goals / tasks
 
+- **In progress (planned iterations, probe-first)**:
+  - **Granular monitoring (two-tier loop + urgency)**: fast vitals loop (20-50 ms) for decisions, full snapshot (belt/merc/items) at 250-500 ms; slope detector (dHP/dt over N samples) → "under damage" flag → urgency-aware thresholds (drink sooner under threat, thrifty when safe).  Core logic only — no probes needed, unit-testable.
+  - **Poison status via unit states block**: states = 6 x u32 at `statsListEx + 0xAF0` (d2go reference), bit b of word i = state id (32*i + b); **Poison = bit 2 of word 0 (0x4)**.  Probe-verified on the live client: block reads valid (word 3 shows the always-on `Alignment` state, poison bit currently 0).  Needs one in-game poison hit to confirm the bit flips (also worth confirming Antidote state 196 clears it).  Value: poison keeps ticking in "safe" spots (town, after a fight) — a poison-aware threshold can drink before it hurts.
+  - **Enemy-nearby unit scan**: walk the 128-entry unit table chains (`UNIT_OFFSET_NEXT`) — probe walks fine (found 7 units incl. the player), but the live sample had no monsters/NPCs in range; needs a fight to identify the hostile-flag byte(s) (class/corpse/mode/state) before the urgency logic can use it.
+  - **Mana-need prediction**: with known potion restore/duration, predict when the current drain (slope) makes a drink needed and time the press so the bar never sits empty mid-cast — extension of the waste guard, pure logic, no probes.
+
 - **Done (v1.8.3-beta)**: **menu detection fixed + pause_when_menus_open disabled**. The `ui-v3` signature matched twice; the scan now tests each hit and accepts the one resolving to a readable UI struct. Flag indices appear shifted for this build; detection works but is inaccurate — structural UI scan deferred. User config `pause_when_menus_open = false` so drinking works with inventory/stash open. **118 tests green**; compileall + headless UI smoke pass.
 - **Done (v1.8.2-beta)**: unified decision logic — **no smart/plain tiers**
   (`_plain_tick` removed; `_tick` runs only `plan_consume` regardless of the
