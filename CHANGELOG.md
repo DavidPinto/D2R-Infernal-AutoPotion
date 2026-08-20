@@ -5,6 +5,34 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.2-beta] - 2026-08-20
+
+### Fixed (full-app code review pass)
+- Belt-key rebinding on the Keys tab crashed with `ModuleNotFoundError` (a
+  local `from .hotkey import ...` resolved to a non-existent `ui.hotkey`; the
+  working `d2r.hotkey` import was already in scope).
+- `d2r/input.py` typed `GetClientRect` as an 8-byte `POINT` instead of the
+  16-byte `RECT` it writes — an 8-byte buffer overflow, and
+  `window_rect`/`window_client_rect` always returned a degenerate `(0,0)`
+  client size (the root cause of the deferred belt-refill clicker's
+  unreliability).  Live-verified: a 1280×800 window now reports exactly that.
+- `d2r/watcher.py` could crash the watcher thread with `NameError` when a
+  corrupt persisted `poll_interval_ms` (or a first-tick read failure) reached
+  the "never crash" loop guard; the interval/snapshot are bound before the
+  loop.
+- `d2r/models.py` rejuv restore with a `restore_override` dict lacking the
+  player's class group indexed the dict by grade (KeyError / wrong amount)
+  instead of falling back to the percentage table; heal/mana restore overrides
+  are now applied per class group too.
+- `d2r/process.py` leaked a process-module snapshot handle (duplicate
+  `CreateToolhelp32Snapshot` call).
+- `d2r/keys.py` `XINPUT_GAMEPAD_B/X/Y` constants were 0x1001-0x1003 instead of
+  the real XInput values 0x2000/0x4000/0x8000.
+- Gamepad-mode toggle now applies to a running watcher immediately (KeySender
+  cached `use_gamepad` at connect time; it reads the config on every press).
+- The startup "restart as administrator" prompt now reads the saved config
+  (`AppConfig.load()`), so it actually fires for users with gamepad mode on.
+
 ## [1.9.0-beta] - 2026-08-20
 
 ### Added

@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit). It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.9.0-beta` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.9.2-beta` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`. See
 > [Limitations](#limitations) below.
 

@@ -49,9 +49,9 @@ XINPUT_GAMEPAD_DPAD_DOWN = 0x0002
 XINPUT_GAMEPAD_DPAD_LEFT = 0x0004
 XINPUT_GAMEPAD_DPAD_RIGHT = 0x0008
 XINPUT_GAMEPAD_A = 0x1000
-XINPUT_GAMEPAD_B = 0x1001
-XINPUT_GAMEPAD_X = 0x1002
-XINPUT_GAMEPAD_Y = 0x1003
+XINPUT_GAMEPAD_B = 0x2000
+XINPUT_GAMEPAD_X = 0x4000
+XINPUT_GAMEPAD_Y = 0x8000
 
 # XInput button mapping for D-pad (belt keys)
 XINPUT_BUTTON_MAP = {
@@ -366,7 +366,6 @@ class KeySender:
         self.config = config
         self.pid = pid
         self._vks: dict[str, int | None] = {}
-        self._use_gamepad = config.behavior.get("use_gamepad", False)
         self._gamepad = XboxSyntheticGamepad()
 
     def resolve(self, name: str) -> int | None:
@@ -400,7 +399,9 @@ class KeySender:
         for the action is used (belt unreadable).  Merc actions add the
         configured feed-to-merc modifier (default Shift).  Returns False if the
         binding is unresolved or the injection was rejected by the OS."""
-        if self._use_gamepad:
+        # Read the flag live: toggling gamepad mode in the UI must apply to the
+        # running watcher (KeySender lives for the whole connection session).
+        if self.config.use_gamepad:
             return self._press_gamepad(action, key)
         
         modifier = self.config.merc_modifier() if action.startswith("merc_") else None
@@ -424,6 +425,7 @@ class KeySender:
         dpad_map = {"Q": "DPAD_LEFT", "W": "DPAD_UP", "E": "DPAD_DOWN", "R": "DPAD_RIGHT"}
         dpad = dpad_map.get(key_name, "")
         if not dpad:
+            print(f"[keys] No D-pad mapping for column '{key_name}'")
             return False
         if not self._gamepad.connect():
             print("[keys] Gamepad unavailable — restart the app as administrator "

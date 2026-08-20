@@ -175,7 +175,6 @@ def get_process_name(pid: int) -> str:
 def get_process_modules(pid: int) -> list[tuple[int, int, str]]:
     """All loaded modules of a process as ``(base, size, name)`` tuples."""
     snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid)
-    snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid)
     if snap == INVALID_HANDLE_VALUE:
         return []
     modules: list[tuple[int, int, str]] = []

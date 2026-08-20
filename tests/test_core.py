@@ -370,6 +370,28 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(pc.choose_belt_column("rejuv", 100, 200), 3)
         self.assertEqual(pc.choose_belt_column("rejuv", 50, 200), 0)
 
+    def test_rejuv_restore_override_missing_group_falls_back(self):
+        from d2r import models as m
+        codes = m.PotionCodes([
+            m.PotionEntry(515, "rejuv", 0, restore_override={1: 300}),
+        ])
+        # Rejuv's class group is always 1; an override covering it wins.
+        self.assertEqual(codes.restore(515, 200, player_class="Paladin"), 300)
+        # An override dict missing the group must fall back to the % table
+        # (35% of max), never index the dict by grade.
+        codes2 = m.PotionCodes([
+            m.PotionEntry(515, "rejuv", 0, restore_override={0: 300}),
+        ])
+        self.assertEqual(codes2.restore(515, 200, player_class="Barbarian"), 70)
+
+    def test_heal_restore_override_applied_per_group(self):
+        from d2r import models as m
+        codes = m.PotionCodes([
+            m.PotionEntry(587, "heal", 0, restore_override={1: 120}),
+        ])
+        self.assertEqual(codes.restore(587, 200, player_class="Paladin"), 120)   # group 1 override
+        self.assertEqual(codes.restore(587, 200, player_class="Barbarian"), 60)  # group 2 -> table
+
     def test_potion_codes_custom_table(self):
         codes = m.PotionCodes([
             m.PotionEntry(587, "heal", 0), m.PotionEntry(591, "heal", 4),
@@ -1308,6 +1330,13 @@ class KeysTests(unittest.TestCase):
         from d2r.keys import press_gamepad_button
         # 0x9999 is not a mapped button: must fail before touching the OS.
         self.assertFalse(press_gamepad_button(0x9999))
+
+    def test_xinput_face_button_constants_match_real_values(self):
+        from d2r.keys import (XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B,
+                              XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y)
+        self.assertEqual((XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B,
+                          XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y),
+                         (0x1000, 0x2000, 0x4000, 0x8000))
 
 
 class HotkeyTests(unittest.TestCase):

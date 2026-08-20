@@ -265,8 +265,9 @@ class PotionCodes:
                 grp = self._group("rejuv", player_class)
                 if grp in e.restore_override:
                     return e.restore_override[grp]
-            # Per-entry override takes priority, then config, then built-in
-            pct = e.restore_override or self._rejuv_restore_percent
+            # Missing group in the per-class override: fall back to the % table
+            # (the override dict is NOT a percentage tuple — do not index it).
+            pct = self._rejuv_restore_percent
             if pct and 0 <= e.grade < len(pct):
                 return max(0, int(max_value * pct[e.grade] / 100))
             if 0 <= e.grade < len(REJUV_RESTORE_PERCENT):
@@ -274,7 +275,10 @@ class PotionCodes:
             return 0
         row = POTION_TABLES.get(e.kind)
         if row and 0 <= e.grade < len(row):
-            return row[e.grade][1 + self._group(e.kind, player_class)]
+            grp = self._group(e.kind, player_class)
+            if e.restore_override and grp in e.restore_override:
+                return e.restore_override[grp]
+            return row[e.grade][1 + grp]
         return 0
 
     def duration(self, txt: int, player_class: str = "") -> float:

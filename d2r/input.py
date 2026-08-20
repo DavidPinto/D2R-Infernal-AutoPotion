@@ -23,6 +23,11 @@ class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
 
+class RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
 user32.SetCursorPos.restype = ctypes.c_bool
 user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
 user32.GetCursorPos.restype = ctypes.c_bool
@@ -30,7 +35,7 @@ user32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
 user32.ClientToScreen.restype = ctypes.c_bool
 user32.ClientToScreen.argtypes = [ctypes.c_void_p, ctypes.POINTER(POINT)]
 user32.GetClientRect.restype = ctypes.c_bool
-user32.GetClientRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(POINT)]
+user32.GetClientRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(RECT)]
 user32.GetForegroundWindow.restype = ctypes.c_void_p
 user32.GetWindowThreadProcessId.restype = ctypes.c_ulong
 user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
@@ -49,11 +54,11 @@ def window_rect(hwnd: int) -> tuple[int, int, int, int]:
     if not hwnd:
         return None
     origin = POINT()
-    size = POINT()
-    if (not user32.GetClientRect(hwnd, ctypes.byref(size))
+    rect = RECT()
+    if (not user32.GetClientRect(hwnd, ctypes.byref(rect))
             or not user32.ClientToScreen(hwnd, ctypes.byref(origin))):
         return None
-    return (origin.x, origin.y, origin.x + size.x, origin.y + size.y)
+    return (origin.x, origin.y, origin.x + rect.right, origin.y + rect.bottom)
 
 
 def window_client_rect(hwnd: int) -> tuple[int, int] | None:

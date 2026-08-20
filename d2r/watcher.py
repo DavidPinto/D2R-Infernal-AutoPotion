@@ -167,6 +167,10 @@ class PotionWatcher:
         self.running = True
         self.error = None
         reported_connected = False
+        # Bound before the loop so the guard below can never NameError on a
+        # corrupt persisted interval (or a first-tick read failure).
+        snap = m.PlayerSnapshot()
+        interval = max(50, int(self.config.behavior.get("poll_interval_ms", 150))) / 1000.0
 
         while not self._stop.is_set():
             try:

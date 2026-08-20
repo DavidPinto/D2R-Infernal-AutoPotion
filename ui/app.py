@@ -657,7 +657,6 @@ class MainApp(ctk.CTk):
             # Restore default
             self.config.set_belt_key(col, "")
         else:
-            from .hotkey import keysym_to_key_name
             name = keysym_to_key_name(text)
             if not name:
                 self._belt_keys_hint.configure(
@@ -1516,7 +1515,7 @@ def _relaunch_elevated() -> bool:
 def run():
     # Gamepad mode needs an elevated process (Microsoft's synthetic gamepad API
     # refuses access otherwise); offer a UAC relaunch before the UI appears.
-    if AppConfig().use_gamepad and not _is_elevated():
+    if AppConfig.load().use_gamepad and not _is_elevated():
         if ctk.messagebox.askyesno(
                 "Administrator required",
                 "Gamepad mode needs administrator rights (it uses Microsoft's "
