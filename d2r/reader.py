@@ -109,6 +109,25 @@ class GameReader:
             out[sid] = val
         return out
 
+    def _read_unit_states(self, unit: int) -> frozenset:
+        """Active state ids for a unit (poison, freeze, shrines, ...).
+
+        States are 6 x u32 inside the stats-list-ex struct; each bit is one
+        state id.  Never raises: any read failure yields an empty set."""
+        slex = self.proc.read_ptr(unit + m.UNIT_OFFSET_STATSLISTEX)
+        if not slex:
+            return frozenset()
+        words = [self.proc.read_u32(slex + m.STATSLIST_STATES_OFFSET + i * 4)
+                 for i in range(6)]
+        if not any(words):
+            return frozenset()
+        out = []
+        for i, word in enumerate(words):
+            for bit in range(32):
+                if word & (1 << bit):
+                    out.append(32 * i + bit)
+        return frozenset(out)
+
     # ------------------------------------------------------------- player
     def _find_player_unit(self) -> tuple[int, bool]:
         """Walk the client player hash table for the local player unit.
@@ -784,6 +803,8 @@ class GameReader:
             snap.max_mana = eff_max_mp
             snap.hp_percent = hp_pct
             snap.mana_percent = mp_pct
+            snap.states = self._read_unit_states(unit)
+            snap.poisoned = m.STATE_POISON in snap.states
             merc = self._read_merc()
             if merc is not None:
                 # The merc's Life is a fraction of max, so a full merc reads

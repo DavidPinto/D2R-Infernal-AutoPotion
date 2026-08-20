@@ -996,7 +996,7 @@ class WatcherTests(unittest.TestCase):
         # restore (375 * (1 - 3/5.12) ~= 155) still covers the 110 deficit,
         # so the half-duration gate alone would waste a second potion.
         w = self._watcher()
-        w.config.thresholds["heal_potion_at"] = 30
+        w.config.thresholds["healing_potion_at"] = 30
         w.config.thresholds["mana_potion_at"] = 60
         snap = self._belt_snap(hp=190, mana=90, max_hp=200, max_mana=200,
                                columns=[self._col("R", 611)])
@@ -1009,7 +1009,7 @@ class WatcherTests(unittest.TestCase):
     def test_waste_guard_drinks_when_in_effect_potion_cannot_cover(self):
         # Deficit 300 > the Super mana's remaining restore (155) -> second drink.
         w = self._watcher()
-        w.config.thresholds["heal_potion_at"] = 30
+        w.config.thresholds["healing_potion_at"] = 30
         w.config.thresholds["mana_potion_at"] = 60
         snap = self._belt_snap(hp=190, mana=100, max_hp=200, max_mana=400,
                                columns=[self._col("R", 611)])
@@ -1022,12 +1022,86 @@ class WatcherTests(unittest.TestCase):
     def test_waste_guard_never_gates_rejuv(self):
         # Rejuv is instant-restore: the guard must never hold it back.
         w = self._watcher()
-        w.config.thresholds["heal_potion_at"] = 30
+        w.config.thresholds["healing_potion_at"] = 30
         w.config.thresholds["mana_potion_at"] = 60
         w._last_potion_dur["rejuv"] = 10.0
         w._last_potion_txt["rejuv"] = 615
         w._last_used["rejuv"] = time.monotonic() - 2.0
         self.assertFalse(w._in_effect_covers("rejuv", 50, 200, time.monotonic()))
+
+    # ------------------------------------------------- granular monitoring
+    def test_predict_drop_slope_math(self):
+        w = self._watcher()
+        self.assertIsNone(w._predict_drop(200, 50, series=0))   # window too short
+        w._vitals.append((100.0, 200, 60))
+        self.assertIsNone(w._predict_drop(200, 50, series=0))   # still too short
+        w._vitals.append((101.0, 140, 90))
+        # HP draining at -60/s toward the 50% line (100): 40 left -> 0.667 s.
+        self.assertAlmostEqual(w._predict_drop(200, 50, series=0), 40 / 60)
+        self.assertIsNone(w._predict_drop(200, 50, series=1))   # mana rising
+        w._vitals.clear()
+        w._vitals.append((100.0, 100, 60))
+        w._vitals.append((101.0, 100, 60))
+        self.assertIsNone(w._predict_drop(200, 50, series=0))   # not draining
+
+    def test_pre_drink_mana_before_bar_empties(self):
+        # Mana is draining at -80/s; it would cross the 60% line (120) in
+        # 0.5 s, inside the 1 s pre-drink lead -> drink now, not at the line.
+        w = self._watcher()
+        w.config.thresholds["healing_potion_at"] = 30
+        w.config.thresholds["mana_potion_at"] = 60
+        clock = {"t": 100.0}
+        w._now = lambda: clock["t"]
+        snap = self._belt_snap(hp=190, mana=180, max_hp=200, max_mana=200,
+                               columns=[self._col("R", 611)])
+        w._tick(snap)                                  # one sample: no slope yet
+        self.assertEqual(w.sender.pressed, [])
+        clock["t"] = 100.25
+        snap = self._belt_snap(hp=190, mana=160, max_hp=200, max_mana=200,
+                               columns=[self._col("R", 611)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "R")])
+        # Inside the same-grade cooldown the pre-drink must not double-press.
+        clock["t"] = 100.5
+        snap = self._belt_snap(hp=190, mana=140, max_hp=200, max_mana=200,
+                               columns=[self._col("R", 611)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "R")])
+        # Once the drain slows, the prediction outgrows the lead and stops.
+        clock["t"] = 103.0
+        snap = self._belt_snap(hp=190, mana=140, max_hp=200, max_mana=200,
+                               columns=[self._col("R", 611)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("mana", "R")])
+
+    def test_pre_drink_hp_under_fast_damage(self):
+        w = self._watcher()
+        w.config.thresholds["healing_potion_at"] = 30
+        clock = {"t": 100.0}
+        w._now = lambda: clock["t"]
+        snap = self._belt_snap(hp=160, mana=190, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 602)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed, [])
+        clock["t"] = 100.4                          # -150 HP/s -> 0.27 s to the line
+        snap = self._belt_snap(hp=100, mana=190, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 602)])
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "Q")])
+
+    def test_poison_drinks_heal_even_above_threshold(self):
+        # Poison keeps ticking in otherwise-safe situations; even with a flat
+        # slope (no pre-drink), the state alone puts HP on the heal line.
+        w = self._watcher()
+        w.config.thresholds["healing_potion_at"] = 30
+        snap = self._belt_snap(hp=130, mana=190, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 602)])
+        w._tick(snap)                                # 65% - not poisoned: no drink
+        self.assertEqual(w.sender.pressed, [])
+        snap.states = frozenset({m.STATE_POISON})
+        snap.poisoned = True
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "Q")])
 
     def test_same_or_higher_grade_allowed_after_half_duration(self):
         w = self._watcher()

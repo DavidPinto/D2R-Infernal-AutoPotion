@@ -5,6 +5,34 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.4-beta] - 2026-08-20
+
+### Added (granular monitoring — decision logic, no new config)
+- **Poison detection via the unit states block.**  States are 6×u32 inside the
+  stats-list-ex struct at `+0xAF0` (d2go reference layout, stable across D2R
+  3.x builds; verified live on this build — the always-on `Alignment` state
+  reads correctly, poison bit currently 0).  `GameReader._read_unit_states()`
+  decodes the bitfield into the snapshot (`states`/`poisoned`).  Poison keeps
+  ticking in otherwise-safe situations (town, after a fight) and slow poison
+  may not register on a damage slope, so the poisoned flag alone puts HP on
+  the heal line and the app drinks before it hurts.  The poison bit itself
+  needs one in-game poison hit to confirm (cannot be forced during dev).
+- **Drain-slope pre-drink.**  The watcher keeps a rolling (t, HP, mana) window
+  and derives a per-stat drain rate.  When a stat is draining fast enough to
+  cross its threshold within the 1 s pre-drink lead, the decision sees it as
+  already there — so the potion (which restores *over* its duration) is
+  already delivering when the bar empties, instead of the bar sitting empty
+  for the delivery delay.  Stops automatically when the drain slows.
+- Both feed the *normal* decision path (`plan_consume`), so cooldowns, the
+  waste guard, managed columns, desperation mode and out-of-stock all still
+  apply unchanged; pre-drinks cannot double-press inside a cooldown.
+- Injectable watcher clock (`PotionWatcher._now`) so the slope logic is
+  deterministically unit-tested.
+
+Test suite: **131 tests green** (6 new granular-monitoring tests); compileall +
+headless UI smoke pass; live snapshot read validated against the running game
+(player in-game, states `[105]`, `poisoned=False`).
+
 ## [1.9.3-beta] - 2026-08-20
 
 ### Fixed

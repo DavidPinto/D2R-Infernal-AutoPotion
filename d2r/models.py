@@ -514,6 +514,11 @@ STATSLIST_STAT_COUNT = 0x38
 # values).  Verified live: merc base MaxLife = 189<<8, item MaxLife = 199<<8.
 STATSLIST_ITEM_STAT_PTR = 0xA8
 STATSLIST_ITEM_STAT_COUNT = 0xB0
+# Unit states bitfield inside the stats-list-ex struct (d2go reference, stable
+# across D2R 3.x builds; probe-verified live on this build): 6 x u32, bit b of
+# word i = state id (32*i + b).  State 2 (bit 2 of word 0 = 0x4) is Poison.
+STATSLIST_STATES_OFFSET = 0xAF0
+STATE_POISON = 2
 
 # Inventory header field that is non-zero only for the *main* (local) player.
 INV_MAIN_CHECK = 0x30
@@ -639,6 +644,8 @@ class PlayerSnapshot:
     potion_counts: PotionCounts = field(default_factory=PotionCounts)
     menus_open: bool = False
     open_menu_names: list = field(default_factory=list)
+    states: frozenset = frozenset()   # active unit states (state ids, see STATE_*)
+    poisoned: bool = False            # STATE_POISON present (poison keeps ticking)
     error: str = ""
 
     @property

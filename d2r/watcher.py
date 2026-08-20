@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from typing import Callable, Optional
 
 from . import models as m
@@ -47,6 +48,13 @@ _ACTION_KIND = {
 # Rejuvenation restores instantly, so it only needs a short anti-spam gate.
 _REJUV_COOLDOWN = 1.0
 
+# Granular monitoring: the recent-vitals window feeds a per-stat drain slope
+# (pre-drink) and the poison state flags an otherwise-invisible tick source.
+# Pre-drink lead: seconds before the bar would hit its threshold, drink now so
+# the potion (restore-over-duration) is already delivering when it empties.
+_VITALS_WINDOW = 16
+_PRE_DRINK_LEAD = 1.0
+
 
 class PotionWatcher:
     def __init__(self, reader: GameReader, config: AppConfig,
@@ -57,6 +65,10 @@ class PotionWatcher:
         self.reader = reader
         self.config = config
         self.on_event = on_event or (lambda e: None)
+        # Injectable clock (tests drive the slope deterministically).
+        self._now = time.monotonic
+        # Recent (t, hp, mana) samples for the drain-slope pre-drink.
+        self._vitals: deque = deque(maxlen=_VITALS_WINDOW)
         pid = getattr(getattr(reader, "proc", None), "pid", None)
         self.sender = KeySender(config, pid=pid)
 
@@ -242,13 +254,15 @@ class PotionWatcher:
     def _smart_tick(self, snap: m.PlayerSnapshot) -> None:
         """Unified player decisions via :func:`refill.plan_consume` (no tiers)."""
         cfg = self.config
-        t = time.monotonic()
+        t = self._now()
+        self._vitals.append((t, snap.hp, snap.mana))
+        hp_pct, mp_pct = self._effective_percents(snap, t)
         hp_def = max(0, snap.max_hp - snap.hp)
         mp_def = max(0, snap.max_mana - snap.mana)
-        hp_critical = snap.hp_percent <= cfg.threshold("rejuv_potion_at_life")
-        mp_critical = snap.mana_percent < cfg.threshold("rejuv_potion_at_mana")
+        hp_critical = hp_pct <= cfg.threshold("rejuv_potion_at_life")
+        mp_critical = mp_pct < cfg.threshold("rejuv_potion_at_mana")
         acts, missing = refill_mod.plan_consume(
-            hp_percent=snap.hp_percent, mana_percent=snap.mana_percent,
+            hp_percent=hp_pct, mana_percent=mp_pct,
             hp_def=hp_def, mp_def=mp_def,
             max_hp=snap.max_hp, max_mana=snap.max_mana,
             pc=snap.potion_counts, managed=self.config.managed_columns(),
@@ -284,7 +298,7 @@ class PotionWatcher:
     def _merc_tick(self, snap: m.PlayerSnapshot) -> None:
         """Mercenary decisions (only when one is present and alive)."""
         cfg = self.config
-        t = time.monotonic()
+        t = self._now()
         if snap.merc_alive:
             m_def = max(0, snap.merc_max_hp - snap.merc_hp)
             if snap.merc_hp_percent <= cfg.threshold("merc_rejuv_potion_at"):
@@ -293,6 +307,54 @@ class PotionWatcher:
             elif snap.merc_hp_percent <= cfg.threshold("merc_healing_potion_at"):
                 self._act("merc_heal", "heal", m_def, snap.merc_max_hp,
                           f"Merc HP {snap.merc_hp_percent}%", snap, t)
+
+    def _predict_drop(self, max_value: int, threshold_pct: int,
+                      series: int = 0) -> float | None:
+        """Seconds until the stat drains to ``threshold_pct`` of ``max_value``.
+
+        Slope over the recent-vitals window (series 0 = HP, 1 = mana); None when
+        the window is too short, the stat is not draining, or it is already
+        at/below the line (the regular thresholds then apply, not a prediction)."""
+        if max_value <= 0 or len(self._vitals) < 2:
+            return None
+        t0, v0 = self._vitals[0][0], self._vitals[0][1 + series]
+        t1, v1 = self._vitals[-1][0], self._vitals[-1][1 + series]
+        dt = t1 - t0
+        if dt <= 0:
+            return None
+        slope = (v1 - v0) / dt
+        if slope >= 0:
+            return None
+        limit = max_value * threshold_pct / 100.0
+        if v1 <= limit:
+            return 0.0
+        return (v1 - limit) / (-slope)
+
+    def _effective_percents(self, snap: m.PlayerSnapshot, now: float) -> tuple:
+        """HP/MP percentages after granular-urgency adjustments.
+
+        Pre-drink: when a stat is draining toward its threshold fast enough to
+        cross it within the lead time, the decision sees it as already there so
+        the potion starts restoring before the bar empties (potion restore
+        happens over a duration, not instantly).  Poison: damage keeps ticking
+        in otherwise-safe situations (town, after a fight) and slow poison may
+        not register on the slope — the state alone puts HP on the heal line so
+        the app drinks before it hurts.  Both feed the normal decision path, so
+        cooldowns, the waste guard, managed columns and out-of-stock still apply."""
+        cfg = self.config
+        hp_pct = snap.hp_percent
+        mp_pct = snap.mana_percent
+        dt_hp = self._predict_drop(snap.max_hp,
+                                   cfg.threshold("healing_potion_at"), series=0)
+        if dt_hp is not None and dt_hp <= _PRE_DRINK_LEAD:
+            hp_pct = min(hp_pct, cfg.threshold("healing_potion_at") - 1)
+        dt_mp = self._predict_drop(snap.max_mana,
+                                   cfg.threshold("mana_potion_at"), series=1)
+        if dt_mp is not None and dt_mp <= _PRE_DRINK_LEAD:
+            mp_pct = min(mp_pct, cfg.threshold("mana_potion_at") - 1)
+        if snap.poisoned:
+            hp_pct = min(hp_pct, cfg.threshold("healing_potion_at") - 1)
+        return hp_pct, mp_pct
 
     def _pick(self, kind: str, deficit: int, max_value: int,
               snap: m.PlayerSnapshot, critical: bool = False) -> m.BeltColumn | None | bool:
@@ -479,7 +541,7 @@ class PotionWatcher:
         the outcome (success or UIPI-block)."""
         key = self.config.belt_key(column.index) if column is not None else None
         ok = self.sender.press(action, key=key)
-        now = time.monotonic()
+        now = self._now()
         self._last_used[action] = now
         self._last_kind = _ACTION_KIND.get(action, "")
         if ok:
