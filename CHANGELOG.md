@@ -5,19 +5,30 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.9.0-beta] - 2026-08-16
+## [1.9.0-beta] - 2026-08-20
 
 ### Added
-- **Gamepad/controller support** (Keys tab).  When enabled, the app sends
-  XInput gamepad D-pad presses instead of keyboard keys for belt actions.
-  Maps: Q=Left, W=Up, E=Down, R=Right.  Requires XInput-compatible controller.
-  Controller index configurable (0-3).  UI checkbox with descriptive hint.
+- **Real gamepad input via Microsoft's synthetic gamepad API** (Keys tab).
+  When enabled, the app creates a real Xbox controller through
+  `xboxgipsynthetic.dll` (ships with Windows 10 22H2+ cumulative updates — no
+  drivers, nothing to install) and taps the D-pad for belt actions:
+  Q=Left, W=Up, E=Down, R=Right.  Probe-verified end to end: the synthetic
+  controller registers in XInputGetState and D-pad reports are delivered as
+  real XInput button state.
+- Requires the app to run **as administrator** (the API refuses non-elevated
+  processes); the app now detects this at launch and offers a UAC relaunch.
+- The gamepad section moved to just below the belt-hotkey (QWER) section;
+  removed the obsolete controller-index field (the synthetic controller takes
+  the first free XInput slot, the app cannot choose one).
 
 ### Changed
-- Fixed gamepad D-pad mapping to match game defaults (Left, Up, Down, Right)
-  instead of previous incorrect mapping.  UI hint text updated accordingly.
+- Gamepad input now goes through the OS gamepad stack instead of keyboard
+  keys — the minimap no longer moves when a potion is drunk with gamepad mode
+  on.
 
 ### Fixed
+- Duplicate "Watch refresh interval" slider on the Keys tab (the gamepad
+  section had been inserted between two copies of the same block).
 - Menu detection now only reports calibrated menus (no false positives)
 
 ## [1.8.8-beta] - 2026-08-16

@@ -1280,6 +1280,35 @@ class KeysTests(unittest.TestCase):
         self.assertEqual(s._fallback_key("rejuv"), "F1")
         self.assertEqual(s._fallback_key("merc_heal"), "A")
 
+    def test_gip_payload_byte_layout(self):
+        from d2r.keys import _gip_payload
+        # D-pad lives in payload[1] (MSB byte), face buttons in payload[0].
+        self.assertEqual(_gip_payload(), bytes(14))
+        self.assertEqual(_gip_payload(0, 0x01)[1], 0x01)      # DPAD_UP
+        self.assertEqual(_gip_payload(0, 0x02)[1], 0x02)      # DPAD_DOWN
+        self.assertEqual(_gip_payload(0, 0x04)[1], 0x04)      # DPAD_LEFT
+        self.assertEqual(_gip_payload(0, 0x08)[1], 0x08)      # DPAD_RIGHT
+        self.assertEqual(_gip_payload(0x10)[0], 0x10)         # A
+        self.assertEqual(_gip_payload(0x80)[0], 0x80)         # Y
+        self.assertEqual(_gip_payload(0x10, 0x01)[0], 0x10)
+        self.assertEqual(_gip_payload(0x10, 0x01)[1], 0x01)
+        self.assertEqual(len(_gip_payload()), 14)
+
+    def test_gip_button_bits_cover_gamepad_map(self):
+        from d2r.keys import _GIP_BUTTONS_MSB, _GIP_BUTTONS_LSB, XINPUT_BUTTON_MAP
+        # Every XInput button we expose has a GIP bit so legacy presses work.
+        for name, xbit in XINPUT_BUTTON_MAP.items():
+            self.assertTrue(
+                name in _GIP_BUTTONS_MSB or name in _GIP_BUTTONS_LSB,
+                f"{name} (0x{xbit:X}) has no GIP bit")
+        self.assertEqual(_GIP_BUTTONS_MSB["DPAD_UP"], 0x01)
+        self.assertEqual(_GIP_BUTTONS_MSB["DPAD_RIGHT"], 0x08)
+
+    def test_press_gamepad_button_unknown_button_fails_without_api(self):
+        from d2r.keys import press_gamepad_button
+        # 0x9999 is not a mapped button: must fail before touching the OS.
+        self.assertFalse(press_gamepad_button(0x9999))
+
 
 class HotkeyTests(unittest.TestCase):
     def test_parse_hotkey(self):

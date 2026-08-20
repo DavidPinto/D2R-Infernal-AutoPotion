@@ -448,15 +448,6 @@ class MainApp(ctk.CTk):
         self.config.use_gamepad = self._gamepad_var.get()
         self.config.save()
 
-    def _on_gamepad_id_change(self, _=None):
-        try:
-            val = int(self._gamepad_id_entry.get())
-            if 0 <= val <= 3:
-                self.config.gamepad_id = val
-                self.config.save()
-        except ValueError:
-            pass
-
     def _sync_sliders(self):
         """Push config values into every trigger slider + margin slider."""
         for k, frame in self._trigger_sliders.items():
@@ -466,9 +457,6 @@ class MainApp(ctk.CTk):
         self._desperation_var.set(self.config.desperation_mode)
         if hasattr(self, "_gamepad_var"):
             self._gamepad_var.set(self.config.use_gamepad)
-        if hasattr(self, "_gamepad_id_entry"):
-            self._gamepad_id_entry.delete(0, "end")
-            self._gamepad_id_entry.insert(0, str(self.config.gamepad_id))
 
     def _reset_triggers(self):
         from d2r.config import DEFAULTS
@@ -561,6 +549,21 @@ class MainApp(ctk.CTk):
                                             text_color=WARN, wraplength=760, justify="left")
         self._belt_keys_hint.pack(anchor="w", padx=12, pady=(0, 10))
 
+        # Gamepad support
+        w.heading(body, "Gamepad support").pack(anchor="w", padx=12, pady=(4, 4))
+        self._gamepad_var = ctk.BooleanVar(value=self.config.use_gamepad)
+        gp_cb = ctk.CTkCheckBox(body, text="Use gamepad D-pad for belt keys (real gamepad input)",
+                                variable=self._gamepad_var,
+                                command=self._on_gamepad_toggle)
+        gp_cb.pack(anchor="w", padx=12, pady=2)
+        w.hint(body, "When enabled, the app creates a real Xbox controller via "
+                     "Microsoft's built-in synthetic gamepad API "
+                     "(xboxgipsynthetic.dll — ships with Windows 10 22H2+ "
+                     "updates; no drivers, nothing to install) and taps the "
+                     "D-pad for belt actions: Q=Left, W=Up, E=Down, R=Right.  "
+                     "Requires the app to run as administrator (Windows asks "
+                     "once at launch).").pack(anchor="w", padx=12, pady=(0, 4))
+
         w.heading(body, "Mercenary potion modifier").pack(anchor="w", padx=12, pady=(4, 4))
         merc = ctk.CTkFrame(body, fg_color="transparent")
         merc.pack(anchor="w", padx=12, pady=(0, 4), fill="x")
@@ -591,32 +594,6 @@ class MainApp(ctk.CTk):
                                           command=self._on_pause)
         self._pause_switch.pack(anchor="w", padx=12, pady=4)
         self._pause_switch.select() if self.config.behavior.get("pause_when_menus_open", True) else self._pause_switch.deselect()
-
-        # Poll interval (responsiveness vs CPU).
-        self._poll_frame, _ = w.labeled_slider(
-            body, "Watch refresh interval", 100, 500,
-            float(self.config.behavior.get("poll_interval_ms", 150)),
-            lambda v: self._on_poll_interval(v), step=50, fmt="{:.0f} ms")
-        self._poll_frame.pack(fill="x", padx=12, pady=(8, 2))
-
-        # Gamepad support
-        w.heading(body, "Gamepad support").pack(anchor="w", padx=12, pady=(4, 4))
-        gp = ctk.CTkFrame(body, fg_color="transparent")
-        gp.pack(anchor="w", padx=12, pady=(0, 4), fill="x")
-        self._gamepad_var = ctk.BooleanVar(value=self.config.use_gamepad)
-        gp_cb = ctk.CTkCheckBox(gp, text="Use gamepad D-pad for belt keys (requires XInput controller)",
-                                variable=self._gamepad_var,
-                                command=self._on_gamepad_toggle)
-        gp_cb.pack(side="left")
-        ctk.CTkLabel(gp, text="Controller index (0-3):", font=ctk.CTkFont(size=11)).pack(side="left", padx=(12, 4))
-        self._gamepad_id_entry = ctk.CTkEntry(gp, width=40, height=24, font=ctk.CTkFont(size=11), justify="center")
-        self._gamepad_id_entry.pack(side="left", padx=(0, 8))
-        self._gamepad_id_entry.insert(0, str(self.config.gamepad_id))
-        self._gamepad_id_entry.bind("<Return>", self._on_gamepad_id_change)
-        self._gamepad_id_entry.bind("<FocusOut>", self._on_gamepad_id_change)
-        w.hint(body, "When enabled, the app sends XInput gamepad D-pad presses instead of keyboard keys. "
-                     "Q=Left, W=Up, E=Down, R=Right.  Requires an XInput-compatible controller. "
-                     "Controller index 0 = first connected controller.").pack(anchor="w", padx=12, pady=(0, 4))
 
         # Poll interval (responsiveness vs CPU).
         self._poll_frame, _ = w.labeled_slider(
@@ -1517,6 +1494,35 @@ class MainApp(ctk.CTk):
         self.destroy()
 
 
+def _is_elevated() -> bool:
+    """True when the current process runs with administrator rights."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _relaunch_elevated() -> bool:
+    """Restart the app with administrator rights (UAC).  False if declined."""
+    import ctypes
+    import sys
+    exe = sys.executable
+    script = os.path.abspath(sys.argv[0])
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, f'"{script}"', None, 1)
+    return rc > 32
+
+
 def run():
+    # Gamepad mode needs an elevated process (Microsoft's synthetic gamepad API
+    # refuses access otherwise); offer a UAC relaunch before the UI appears.
+    if AppConfig().use_gamepad and not _is_elevated():
+        if ctk.messagebox.askyesno(
+                "Administrator required",
+                "Gamepad mode needs administrator rights (it uses Microsoft's "
+                "built-in synthetic gamepad API — no drivers are installed).\n\n"
+                "Restart the app as administrator now?"):
+            if _relaunch_elevated():
+                return
     app = MainApp()
     app.mainloop()

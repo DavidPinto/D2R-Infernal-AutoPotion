@@ -1,8 +1,10 @@
-"""Keyboard and gamepad simulation using the native Win32 SendInput / XInput APIs.
+"""Keyboard and gamepad simulation using native Win32 APIs.
 
-This replaces AutoHotkey / keybd_event entirely: it talks straight to the OS
-input stack, needs no helper process, and supports Shift-modifier combos (which
-D2R uses to feed potions to the mercenary).  No third-party dependencies.
+Keyboard input goes through SendInput (no AutoHotkey / keybd_event); gamepad
+input through Microsoft's synthetic gamepad API (xboxgipsynthetic.dll — ships
+with Windows 10 22H2+ cumulative updates, no driver install).  Supports
+Shift-modifier combos (which D2R uses to feed potions to the mercenary).  No
+third-party dependencies.
 """
 
 from __future__ import annotations
@@ -219,37 +221,142 @@ def press_key(vk: int, modifier: str | None = None) -> bool:
     return ok
 
 
+# --- Xbox Synthetic Gamepad --------------------------------------------------
+# Microsoft's built-in virtual gamepad API (xboxgipsynthetic.dll, ships with
+# Windows 10 22H2+ cumulative updates — no driver install).  Requirements,
+# probe-verified: the process must be ELEVATED (E_ACCESSDENIED otherwise), the
+# calling thread needs STA COM (0x800401F0 otherwise), and the xboxgipsvc
+# service auto-starts when elevated.  Input report = 14-byte GIP payload with
+# report type 0 (any other type returns E_INVALIDARG): byte[0] holds the left
+# face buttons (Y X B A View Menu KeepAlive), byte[1] the D-pad + right buttons
+# (RSB LSB RB LB Dpad-R L D U), bytes [2:14] the triggers/sticks in LE.
+
+_SYNTH_DLL = "xboxgipsynthetic.dll"
+_SYNTH_REPORT_TYPE_GAMEPAD = 0
+_SYNTH_CONTROLLER_XBOX = 0  # standard Xbox One-style controller
+
+# GIP button bits, grouped by payload byte.
+_GIP_BUTTONS_MSB = {  # payload[1]
+    "DPAD_UP": 0x01, "DPAD_DOWN": 0x02, "DPAD_LEFT": 0x04, "DPAD_RIGHT": 0x08,
+}
+_GIP_BUTTONS_LSB = {  # payload[0]
+    "Y": 0x80, "X": 0x40, "B": 0x20, "A": 0x10,
+}
+
+
+def _gip_payload(buttons_lsb: int = 0, buttons_msb: int = 0) -> bytes:
+    """14-byte GIP gamepad input report (all values little-endian)."""
+    payload = bytearray(14)
+    payload[0] = buttons_lsb & 0xFF
+    payload[1] = buttons_msb & 0xFF
+    return bytes(payload)
+
+
+class XboxSyntheticGamepad:
+    """Virtual Xbox controller via the OS synthetic gamepad API (no drivers)."""
+
+    def __init__(self):
+        self._dll: ctypes.WinDLL | None = None
+        self._handle: ctypes.c_void_p | None = None
+
+    @staticmethod
+    def available() -> bool:
+        """True when xboxgipsynthetic.dll exists on this Windows."""
+        try:
+            ctypes.WinDLL(_SYNTH_DLL)
+            return True
+        except OSError:
+            return False
+
+    def connect(self) -> bool:
+        """Create + connect the controller.  Returns False (logged) on failure."""
+        if self._handle is not None:
+            return True
+        try:
+            if self._dll is None:
+                self._dll = ctypes.WinDLL(_SYNTH_DLL)
+            # STA COM is required by the API on this thread.
+            ole32 = ctypes.WinDLL("ole32")
+            ole32.CoInitializeEx(None, 0x00000002)  # COINIT_APARTMENTTHREADED
+            create = self._dll.SyntheticController_CreateController
+            create.restype = ctypes.c_ulong
+            create.argtypes = [ctypes.c_ulong, ctypes.POINTER(ctypes.c_void_p)]
+            connect = self._dll.SyntheticController_Connect
+            connect.restype = ctypes.c_ulong
+            connect.argtypes = [ctypes.c_void_p]
+            handle = ctypes.c_void_p()
+            rc = create(_SYNTH_CONTROLLER_XBOX, ctypes.byref(handle))
+            if rc != 0 or not handle.value:
+                print(f"[keys] SyntheticController_CreateController rc=0x{rc:08X} "
+                      f"(run the app as administrator)")
+                return False
+            rc = connect(handle)
+            if rc != 0:
+                print(f"[keys] SyntheticController_Connect rc=0x{rc:08X}")
+                return False
+            self._handle = handle
+            print("[keys] Synthetic gamepad connected")
+            return True
+        except OSError as exc:
+            print(f"[keys] Synthetic gamepad unavailable: {exc}")
+            return False
+
+    def send(self, payload: bytes) -> bool:
+        """Send one GIP input report; False when not connected or rejected."""
+        if self._handle is None:
+            return False
+        send = self._dll.SyntheticController_SendReport
+        send.restype = ctypes.c_ulong
+        send.argtypes = [ctypes.c_void_p, ctypes.c_ulong,
+                         ctypes.c_void_p, ctypes.c_uint]
+        buf = ctypes.create_string_buffer(payload, len(payload))
+        rc = send(self._handle, _SYNTH_REPORT_TYPE_GAMEPAD, buf, len(payload))
+        return rc == 0
+
+    def press(self, buttons_lsb: int = 0, buttons_msb: int = 0) -> bool:
+        """Press (hold ~50ms) then release a button set, as one tap."""
+        if not self.send(_gip_payload(buttons_lsb, buttons_msb)):
+            return False
+        time.sleep(0.05)
+        return self.send(_gip_payload())
+
+    def disconnect(self) -> None:
+        """Disconnect + remove the controller (best-effort)."""
+        if self._handle is None:
+            return
+        try:
+            d = self._dll.SyntheticController_Disconnect
+            d.restype = ctypes.c_ulong
+            d.argtypes = [ctypes.c_void_p]
+            d(self._handle)
+            r = self._dll.SyntheticController_RemoveController
+            r.restype = ctypes.c_ulong
+            r.argtypes = [ctypes.c_void_p]
+            r(self._handle)
+        except Exception:
+            pass
+        self._handle = None
+
+
+# Legacy module-level entry point; KeySender uses its own instance.  The
+# controller_id is ignored — the synthetic controller takes the first free
+# XInput slot (the app cannot choose the slot).
+_synth_default = XboxSyntheticGamepad()
+
+
 def press_gamepad_button(button: int, controller_id: int = 0) -> bool:
-    """Press (and release) a gamepad button using XInput.
-
-    Returns False if the controller is not connected or injection fails."""
-    state = XINPUT_STATE()
-    result = XInputGetState(controller_id, ctypes.byref(state))
-    if result != 0:
-        # Controller not connected
+    """Press (and release) a gamepad button through the synthetic gamepad API."""
+    name = XINPUT_BUTTON_NAME.get(button, "")
+    if name in _GIP_BUTTONS_LSB:
+        low, high = _GIP_BUTTONS_LSB[name], 0
+    elif name in _GIP_BUTTONS_MSB:
+        low, high = 0, _GIP_BUTTONS_MSB[name]
+    else:
+        print(f"[keys] Unknown gamepad button: 0x{button:X}")
         return False
-    
-    # For D2R, we need to simulate button press via SendInput with XInput
-    # But XInput is for reading state, not injecting. We need to use SendInput
-    # with the appropriate virtual key codes that map to gamepad buttons.
-    # D2R uses standard gamepad mappings: DPAD_UP=Up, etc.
-    # We'll use SendInput with the appropriate virtual key codes.
-    return press_key(_gamepad_button_to_vk(button))
-
-
-def _gamepad_button_to_vk(button: int) -> int:
-    """Map XInput gamepad button to Windows virtual key code."""
-    mapping = {
-        XINPUT_GAMEPAD_DPAD_UP: 0x26,    # VK_UP
-        XINPUT_GAMEPAD_DPAD_DOWN: 0x28,  # VK_DOWN
-        XINPUT_GAMEPAD_DPAD_LEFT: 0x25,  # VK_LEFT
-        XINPUT_GAMEPAD_DPAD_RIGHT: 0x27,  # VK_RIGHT
-        XINPUT_GAMEPAD_A: 0x41,          # 'A' key
-        XINPUT_GAMEPAD_B: 0x42,          # 'B' key
-        XINPUT_GAMEPAD_X: 0x58,          # 'X' key
-        XINPUT_GAMEPAD_Y: 0x59,          # 'Y' key
-    }
-    return mapping.get(button, 0)
+    if not _synth_default.connect():
+        return False
+    return _synth_default.press(low, high)
 
 
 class KeySender:
@@ -260,7 +367,7 @@ class KeySender:
         self.pid = pid
         self._vks: dict[str, int | None] = {}
         self._use_gamepad = config.behavior.get("use_gamepad", False)
-        self._gamepad_id = config.behavior.get("gamepad_id", 0)
+        self._gamepad = XboxSyntheticGamepad()
 
     def resolve(self, name: str) -> int | None:
         """Resolve a binding name to a VK, caching the result per name."""
@@ -308,28 +415,22 @@ class KeySender:
         return ok
 
     def _press_gamepad(self, action: str, key: str | None = None) -> bool:
-        """Press a gamepad button for an action."""
-        modifier = self.config.merc_modifier() if action.startswith("merc_") else None
+        """Tap the gamepad D-pad direction for an action.
+
+        Column letters map to D-pad directions per the game defaults
+        (Q=Left, W=Up, E=Down, R=Right).  Merc actions press the same
+        direction — D2R has no feed-merc modifier for gamepad input."""
         key_name = key if key else self._fallback_key(action)
-        
-        # Map column letter to D-pad direction (game defaults: Left, Up, Down, Right)
         dpad_map = {"Q": "DPAD_LEFT", "W": "DPAD_UP", "E": "DPAD_DOWN", "R": "DPAD_RIGHT"}
-        dpad_key = dpad_map.get(key_name, "")
-        if not dpad_key:
+        dpad = dpad_map.get(key_name, "")
+        if not dpad:
             return False
-        
-        button = XINPUT_BUTTON_MAP.get(dpad_key)
-        if button is None:
+        if not self._gamepad.connect():
+            print("[keys] Gamepad unavailable — restart the app as administrator "
+                  "(needs Windows 10 22H2+ with xboxgipsynthetic.dll)")
             return False
-        
-        # For merc actions, we need to hold modifier + press button
-        # This is complex with gamepad; for now just press the button
-        if modifier:
-            # TODO: Implement modifier + gamepad button
-            pass
-        
         self._ensure_game_focused()
-        ok = press_gamepad_button(button, self._gamepad_id)
+        ok = self._gamepad.press(0, _GIP_BUTTONS_MSB[dpad])
         if ok and self.config.behavior.get("sound", True):
             self.chime()
         return ok
