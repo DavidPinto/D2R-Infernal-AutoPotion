@@ -342,6 +342,8 @@ class PotionWatcher:
         the app drinks before it hurts.  Both feed the normal decision path, so
         cooldowns, the waste guard, managed columns and out-of-stock still apply."""
         cfg = self.config
+        if not cfg.behavior.get("predictive_drinking", True):
+            return snap.hp_percent, snap.mana_percent
         hp_pct = snap.hp_percent
         mp_pct = snap.mana_percent
         dt_hp = self._predict_drop(snap.max_hp,
@@ -372,8 +374,8 @@ class PotionWatcher:
         allowed = tuple(self.config.managed_columns())
         idx = pc.choose_belt_column(kind, deficit, max_value, allowed_keys=allowed)
         if idx is None:
-            # Normal selection failed - try desperation mode if enabled and critical
-            if self.config.desperation_mode and critical and kind == "rejuv":
+            # Normal selection failed - try reach buried rejuv if enabled and critical
+            if self.config.reach_buried_rejuv and critical and kind == "rejuv":
                 idx = self._find_reachable_rejuv(snap)
                 if idx is not None:
                     return next((c for c in pc.columns if c.index == idx), False)

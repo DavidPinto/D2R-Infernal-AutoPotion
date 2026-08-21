@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already delivering when the bar empties, instead of the bar sitting empty
   for the delivery delay.  Stops automatically when the drain slows.
 - Both feed the *normal* decision path (`plan_consume`), so cooldowns, the
-  waste guard, managed columns, desperation mode and out-of-stock all still
+  waste guard, managed columns, panic mode and out-of-stock all still
   apply unchanged; pre-drinks cannot double-press inside a cooldown.
 - Injectable watcher clock (`PotionWatcher._now`) so the slope logic is
   deterministically unit-tested.
@@ -121,7 +121,7 @@ Test suite: **127 tests green**; compileall + headless UI smoke pass.
 ## [1.8.8-beta] - 2026-08-16
 
 ### Added
-- **Desperation Mode** (Triggers tab checkbox).  When HP is at/below the rejuv
+- **Panic Mode** (Triggers tab checkbox).  When HP is at/below the rejuv
   threshold, bypasses normal restrictions to reach a rejuv potion:
   - Looks for a rejuv in rows 1-3 of managed belt columns
   - Requires no empty slots between the rejuv and row 0 (potions drop
@@ -135,7 +135,7 @@ Test suite: **127 tests green**; compileall + headless UI smoke pass.
   - UI checkbox with clear warning about wastefulness
 
 ### Changed
-- Replaced "Keep Alive Mode" with "Desperation Mode" (more descriptive name
+- Replaced "Keep Alive Mode" with "Panic Mode" (more descriptive name
   matching the wasteful nature of the feature)
 - UI checkbox renamed with clear warning tooltip
 

@@ -96,12 +96,15 @@ DEFAULTS = {
         # (prefer a specific potion over a rejuv when only one stat is low) and
         # refill the belt per the layout/ratio plan below.
         "smart": True,
-        # Desperation mode: when HP is at/below rejuv threshold, bypass normal
-        # restrictions to reach an instant-heal rejuv.  THIS IS WASTEFUL - it
-        # may drink multiple potions (mana/heal) to clear a path to a rejuv
-        # deeper in the belt.  Respects empty slots (potions don't drop through
-        # empty space).  Only enable if you accept wasting potions to survive.
-        "desperation_mode": False,
+        # Predictive drinking: drain-slope pre-drinking (starts potion restore
+        # before the bar empties) and poison-state early drinking.  When False,
+        # potion drinking triggers purely at the configured threshold percentages.
+        "predictive_drinking": True,
+        # Reach buried rejuv: when HP is at/below rejuv threshold, drink through
+        # potions in a belt column to reach an instant-heal rejuv beneath them.
+        # THIS IS WASTEFUL - it may consume multiple potions to clear a path.
+        # Respects empty slots (potions don't drop through empty space).
+        "reach_buried_rejuv": False,
         # Gamepad support: use gamepad D-pad instead of keyboard for belt keys.
         # When enabled, the app sends XInput gamepad button presses instead of
         # keyboard keystrokes.  Requires a connected XInput-compatible controller.
@@ -220,12 +223,12 @@ class AppConfig:
         self.behavior["enabled"] = bool(value)
 
     @property
-    def desperation_mode(self) -> bool:
-        return bool(self.behavior.get("desperation_mode", False))
+    def reach_buried_rejuv(self) -> bool:
+        return bool(self.behavior.get("reach_buried_rejuv", False))
 
-    @desperation_mode.setter
-    def desperation_mode(self, value: bool) -> None:
-        self.behavior["desperation_mode"] = bool(value)
+    @reach_buried_rejuv.setter
+    def reach_buried_rejuv(self, value: bool) -> None:
+        self.behavior["reach_buried_rejuv"] = bool(value)
 
     @property
     def use_gamepad(self) -> bool:

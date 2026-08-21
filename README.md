@@ -25,7 +25,7 @@ presses the correct belt keys for you.
 - **Auto-potion drinking** — Monitors HP/Mana/Merc HP and presses Q/W/E/R when thresholds are crossed
 - **Grade-aware drinking** — Reads the exact potion in each belt slot; drinks the *smallest grade* that covers the deficit (won't burn a Full Rejuv when a Minor would do)
 - **Smart tier (default)** — Considers the whole managed belt: takes Rejuv when both HP/MP critical; uses smallest sufficient heal/mana grade; falls back to Rejuv when no specific potion covers the deficit
-- **Desperation Mode** — When HP is critical (at/below Rejuv threshold), can drink through potions above a Rejuv to reach it (respects empty slots, may consume multiple potions)
+- **Panic Mode** — When HP is critical (at/below Rejuv threshold), can drink through potions above a Rejuv to reach it (respects empty slots, may consume multiple potions)
 - **Grade-aware cooldowns** — Respects potion duration; same/higher grade can be redrunk at half duration, weaker waits full duration × margin
 - **Mercenary support** — Feeds merc potions using belt key + modifier (Shift by default)
 - **Live Dashboard** — Real-time HP/Mana/Merc bars, belt + inventory potion counts, per-action potion log
@@ -92,9 +92,9 @@ The "Smart" tier evaluates the entire managed belt:
 
 ---
 
-## Desperation Mode
+## Panic Mode
 
-When enabled (*Triggers* tab → **Desperation mode**), and HP drops to/below the Rejuv threshold (HP ≤ 25% by default):
+When enabled (*Triggers* tab → **Panic Mode**), and HP drops to/below the Rejuv threshold (HP ≤ 25% by default):
 
 1. Looks for a **Rejuv in rows 1-3** (slots 4-15) of any **managed** belt column
 2. Verifies **no empty slots** exist between that Rejuv and row 0 (potions drop potion-to-potion)
@@ -103,7 +103,7 @@ When enabled (*Triggers* tab → **Desperation mode**), and HP drops to/below th
 
 **WASTEFUL** — may drink multiple potions to clear a path to a Rejuv. Respects empty slots (potions don't drop through empty space). Only enable if you accept wasting potions to survive.
 
-**Use case:** You have a Full Rejuvenation in slot 5 (row 1, column W) but your Q/W/E columns have mana/heal potions in row 0. With Desperation mode on, the app will drink the Q/W/E potions so the Rejuv falls down, then drink the Rejuv.
+**Use case:** You have a Full Rejuvenation in slot 5 (row 1, column W) but your Q/W/E columns have mana/heal potions in row 0. With Panic Mode on, the app will drink the Q/W/E potions so the Rejuv falls down, then drink the Rejuv.
 
 **Limitations:** Only works for Rejuvenation potions. Does not drink through empty slots (the Rejuv won't fall through gaps). May consume many potions per cycle. Disable for normal play.
 
@@ -134,8 +134,8 @@ When enabled (*Triggers* tab → **Desperation mode**), and HP drops to/below th
 
 Adjust on the *Triggers* tab to match your playstyle.
 
-### Desperation Mode
-Enable *Triggers → Desperation mode* **only when you accept wasting potions** to reach a Rejuv. The app will drink through row-0 potions to clear a path to a Rejuv in rows 1-3. Respects empty slots (won't drop through gaps). **Disable for normal play.**
+### Panic Mode
+Enable *Triggers → Panic Mode* **only when you accept wasting potions** to reach a Rejuv. The app will drink through row-0 potions to clear a path to a Rejuv in rows 1-3. Respects empty slots (won't drop through gaps). **Disable for normal play.**
 
 ### Manual Max HP/MP
 The game's `MaxLife` stat excludes gear bonuses. The tool tracks a running observed max, but you can enter your true geared max HP/MP on the Dashboard → Manual Max (0 = auto) for correct percentages immediately.

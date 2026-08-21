@@ -408,16 +408,27 @@ class MainApp(ctk.CTk):
                      "back after the in-effect potion has finished restoring, so "
                      "it never drags the fill rate down.  Rejuvenation is instant.").pack(anchor="w", padx=12, pady=(0, 4))
 
-        # Desperation mode
-        desperation_frame = ctk.CTkFrame(body, fg_color="transparent")
-        desperation_frame.pack(fill="x", padx=12, pady=(4, 2))
-        self._desperation_var = ctk.BooleanVar(value=self.config.desperation_mode)
-        desperation_cb = ctk.CTkCheckBox(desperation_frame,
-            text="Desperation mode: when HP critical, drink through potions to reach a rejuv (wasteful, respects empty slots)",
-            variable=self._desperation_var,
-            command=self._on_desperation_toggle)
-        desperation_cb.pack(side="left")
-        w.hint(desperation_frame, "When HP is at/below rejuv threshold: drink through potions above a rejuv to reach it. "
+        # Predictive Drinking
+        predictive_frame = ctk.CTkFrame(body, fg_color="transparent")
+        predictive_frame.pack(fill="x", padx=12, pady=(4, 2))
+        self._predictive_var = ctk.BooleanVar(value=self.config.behavior.get("predictive_drinking", True))
+        predictive_cb = ctk.CTkCheckBox(predictive_frame,
+            text="Predictive Drinking: pre-drink before bars empty (compensates for drain & poison)",
+            variable=self._predictive_var,
+            command=self._on_predictive_toggle)
+        predictive_cb.pack(side="left")
+        w.hint(predictive_frame, "Predicts how fast you lose Life/Mana and drinks slightly early so the potion has time to work. Also drinks immediately if poisoned. If OFF, drinks exactly at the threshold slider values.").pack(anchor="w", padx=4)
+
+        # Reach Buried Rejuv
+        panic_frame = ctk.CTkFrame(body, fg_color="transparent")
+        panic_frame.pack(fill="x", padx=12, pady=(4, 2))
+        self._panic_var = ctk.BooleanVar(value=self.config.reach_buried_rejuv)
+        panic_cb = ctk.CTkCheckBox(panic_frame,
+            text="Reach Buried Rejuv: when HP critical, drink through potions to reach a rejuv (wasteful, respects empty slots)",
+            variable=self._panic_var,
+            command=self._on_panic_toggle)
+        panic_cb.pack(side="left")
+        w.hint(panic_frame, "When HP is at/below rejuv threshold: drink through potions above a rejuv to reach it. "
                      "WASTEFUL - may consume multiple potions to clear a path. "
                      "Respects empty slots (potions don't drop through empty space). "
                      "Only enable if you accept wasting potions to survive.").pack(anchor="w", padx=24, pady=(0, 4))
@@ -434,8 +445,12 @@ class MainApp(ctk.CTk):
         self.config.behavior["potion_margin_percent"] = int(round(value))
         self.config.save()
 
-    def _on_desperation_toggle(self):
-        self.config.desperation_mode = self._desperation_var.get()
+    def _on_predictive_toggle(self):
+        self.config.behavior["predictive_drinking"] = self._predictive_var.get()
+        self.config.save()
+
+    def _on_panic_toggle(self):
+        self.config.reach_buried_rejuv = self._panic_var.get()
         self.config.save()
 
     def _on_gamepad_toggle(self):
@@ -448,7 +463,8 @@ class MainApp(ctk.CTk):
             frame.set_value(self.config.threshold(k))  # type: ignore[attr-defined]
         self._margin_slider.set_value(  # type: ignore[attr-defined]
             self.config.behavior.get("potion_margin_percent", 20))
-        self._desperation_var.set(self.config.desperation_mode)
+        self._panic_var.set(self.config.reach_buried_rejuv)
+        self._predictive_var.set(self.config.behavior.get("predictive_drinking", True))
         if hasattr(self, "_gamepad_var"):
             self._gamepad_var.set(self.config.use_gamepad)
 
@@ -457,7 +473,8 @@ class MainApp(ctk.CTk):
         self.config.thresholds = dict(DEFAULTS["thresholds"])
         self.config.behavior["potion_margin_percent"] = DEFAULTS["behavior"]["potion_margin_percent"]
         self.config.behavior["potion_class_override"] = ""
-        self.config.behavior["desperation_mode"] = DEFAULTS["behavior"]["desperation_mode"]
+        self.config.behavior["reach_buried_rejuv"] = DEFAULTS["behavior"]["reach_buried_rejuv"]
+        self.config.behavior["predictive_drinking"] = DEFAULTS["behavior"]["predictive_drinking"]
         self.config.behavior["use_gamepad"] = DEFAULTS["behavior"]["use_gamepad"]
         self.config.behavior["gamepad_id"] = DEFAULTS["behavior"]["gamepad_id"]
         self._sync_sliders()
