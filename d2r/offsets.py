@@ -301,8 +301,8 @@ def discover_unit_table(proc: Process, time_budget: float = 90.0,
     buckets (true in-game), then RPM-validate that a few of those pointers really
     point at unit-like structures (path + stat list).
 
-    Scans every module of the process (not just the main one) so a loader such as
-    D2RMM.exe that hosts the real game module still resolves.
+    Scans every module of the process (not just the main one) so injected
+    builds (mod managers load into D2R.exe itself) still resolve.
 
     Requires the player to be *in a game* (otherwise the table is empty).
     Returns ``(module_base, offset)`` or ``(0, 0)`` if not found.  If ``stats``

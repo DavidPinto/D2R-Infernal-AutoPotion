@@ -12,10 +12,10 @@ import ctypes
 import ctypes.wintypes as wt
 from dataclasses import dataclass, field
 
-# Executable names the game may run under.  "Infernal Edition" is a D2R client
-# build, so the process is still D2R.exe.  D2RMM.exe is the *mod manager* / loader
-# and is NOT the game itself, so D2R.exe is listed first and preferred.
-GAME_PROCESS_NAMES = ["D2R.exe", "Diablo II Resurrected.exe", "D2RMM.exe"]
+# The game process is always D2R.exe.  "Infernal Edition" is a D2R client
+# build and mod managers (D2RMM) inject INTO that process — they are not the
+# game themselves and must never be attached to.
+GAME_PROCESS_NAMES = ["D2R.exe"]
 # Strict preference order (lower number = tried first).
 GAME_PROCESS_PRIORITY = {n.lower(): i for i, n in enumerate(GAME_PROCESS_NAMES)}
 

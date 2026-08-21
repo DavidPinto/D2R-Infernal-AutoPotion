@@ -1421,6 +1421,12 @@ class WatcherTests(unittest.TestCase):
 
 
 class KeysTests(unittest.TestCase):
+    def test_game_process_names_d2r_only(self):
+        from d2r.process import GAME_PROCESS_NAMES
+        # The manager/loader exes must never be attached to (they are not the
+        # game); only the real client process qualifies.
+        self.assertEqual(GAME_PROCESS_NAMES, ["D2R.exe"])
+
     def test_resolve_modifier(self):
         from d2r.keys import resolve_modifier
         self.assertEqual(resolve_modifier("SHIFT"), 0x10)

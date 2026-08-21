@@ -900,8 +900,7 @@ class GameReader:
         mods = getattr(self.proc, "all_modules", [])
         if mods:
             game_mods = [n for _, _, n in mods
-                         if any(n.lower().endswith(g.lower()) for g in
-                                ("d2r.exe", "d2rmm.exe", "diablo ii resurrected.exe"))]
+                         if n.lower().endswith("d2r.exe")]
             lines.append(f"  game modules: {game_mods if game_mods else 'NONE -- attached module may be wrong!'}")
             if len(mods) <= 40:
                 lines.append("  all modules: " + ", ".join(n for _, _, n in mods))

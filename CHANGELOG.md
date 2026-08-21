@@ -5,6 +5,28 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.8-beta] - 2026-08-21
+
+### Changed (startup speed & connection flow)
+- **The UI no longer freezes at startup.**  Attach + offset resolution (the
+  multi-second signature scan) moved off the UI thread (`_connect_worker`);
+  the window appears immediately with a "Looking for D2R…" status.
+- **No offset searching without a running game.**  A cheap process-name
+  snapshot (~every 2 s) gates every connect attempt; when D2R.exe is absent
+  the status pill shows **"Game not found"** and nothing is opened or scanned.
+  The old unconditional 3 s retry loop is gone.
+- **Renamed/loader executables scrapped**: only `D2R.exe` is recognised as the
+  game (`GAME_PROCESS_NAMES = ["D2R.exe"]`).  Mod-manager processes are never
+  attached to.
+- Top-bar button now reads **Connect** when detached and Reconnect once
+  attached; diagnostics scan connects synchronously on its own background
+  thread and reports "D2R.exe is not running" distinctly.
+- Live check: window up in ~1.4 s including imports; with no game running the
+  pill settles on "Game not found" and no attach happens.
+
+Test suite: **136 tests green** (new: exe allow-list is D2R-only); compileall +
+headless UI smoke pass.
+
 ## [1.9.7-beta] - 2026-08-21
 
 ### Fixed (merc parity + gamepad merc feed)

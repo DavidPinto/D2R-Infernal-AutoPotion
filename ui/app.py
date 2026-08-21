@@ -18,7 +18,7 @@ import customtkinter as ctk
 
 from d2r import __version__, models as m
 from d2r.config import AppConfig, PRESETS
-from d2r.process import Process, ProcessNotFound
+from d2r.process import Process, ProcessNotFound, find_d2r_processes
 from d2r.reader import GameReader
 from d2r.watcher import PotionWatcher
 from d2r.log import EventLog
@@ -110,6 +110,7 @@ class MainApp(ctk.CTk):
         self.reader: GameReader | None = None
         self.watcher: PotionWatcher | None = None
         self.connected = False
+        self._connecting = False
         self._capturing: str | None = None
         self._capture_col: str | None = None
         self._held_mods: set[str] = set()
@@ -137,17 +138,18 @@ class MainApp(ctk.CTk):
         ctk.CTkLabel(bar, text="⚔  D2R Infernal Auto Potion",
                      font=ctk.CTkFont(size=18, weight="bold")).pack(side="left", padx=(6, 12))
 
-        self.status_pill = ctk.CTkLabel(bar, text="Connecting…", corner_radius=12,
+        self.status_pill = ctk.CTkLabel(bar, text="Starting…", corner_radius=12,
                                         fg_color=WARN, text_color="white",
                                         font=ctk.CTkFont(size=12, weight="bold"),
                                         width=150, height=26)
         self.status_pill.pack(side="left", padx=(0, 12))
 
-        self.reconnect_btn = ctk.CTkButton(bar, text="Reconnect", width=90,
+        self.reconnect_btn = ctk.CTkButton(bar, text="Connect", width=90,
                                            command=self._reconnect)
         self.reconnect_btn.pack(side="left", padx=(0, 12))
         w.attach_tooltip(self.reconnect_btn,
-                         "Drop the connection and re-attach to D2R, re-resolving offsets.")
+                         "Attach to D2R and resolve offsets. Use Reconnect to "
+                         "drop and re-attach (e.g. after a game restart).")
 
         self.enable_btn = ctk.CTkButton(bar, text="DISABLED", width=140, height=34,
                                         fg_color=DANGER, hover_color="#c0392b",
@@ -1116,14 +1118,19 @@ class MainApp(ctk.CTk):
         lines: list[str] = []
         try:
             if not self.connected:
-                self._try_connect()
+                # Already on a background thread: connect synchronously so the
+                # scan below sees a reader (the async path would race it).
+                if not self._connecting:
+                    self._connect_worker()
             if self.reader is not None:
                 lines = self.reader.diagnose()
             elif self.proc is not None:
                 temp = GameReader(self.proc)
                 lines = temp.diagnose()
+            elif not find_d2r_processes():
+                lines = ["D2R.exe is not running. Start the game, then scan."]
             else:
-                lines = ["Could not attach to D2R.exe. Start the game first."]
+                lines = ["Could not attach to D2R.exe."]
         except Exception as exc:
             lines = [f"Scan error: {exc}"]
         text = "\n".join(lines)
@@ -1212,16 +1219,41 @@ class MainApp(ctk.CTk):
         self.event_log.append(e.kind, e.message, e.timestamp)
 
     # -------------------------------------------------------- connection
+    def _sync_connect_button(self):
+        """Connect when detached, Reconnect once attached (marshalled)."""
+        text = "Reconnect" if self.connected else "Connect"
+        try:
+            self.after(0, lambda: self.reconnect_btn.configure(text=text))
+        except Exception:
+            pass
+
     def _reconnect(self):
         """Force a fresh attach + offset resolution (disconnect first)."""
         self._disconnect()
         self._try_connect()
 
     def _try_connect(self):
-        """Attach to D2R, resolve offsets, and start the watcher (idempotent)."""
-        if self.connected:
+        """Kick off attach + offset resolution on a background thread.
+
+        The signature scan can take seconds; running it on the UI thread froze
+        the window at every startup.  Idempotent: a connect already in flight
+        is never doubled."""
+        if self.connected or self._connecting:
             return
+        self._connecting = True
+        self._set_status("Looking for D2R…", WARN)
+        threading.Thread(target=self._connect_worker, daemon=True).start()
+
+    def _connect_worker(self):
+        """Attach to D2R, resolve offsets, and start the watcher (background).
+
+        Never opens the process when the game is not running — a cheap process
+        snapshot answers that, and the status pill says so instead of silently
+        retrying."""
         try:
+            if not find_d2r_processes():
+                self._set_status("Game not found", WARN)
+                return
             proc = Process.attach()
             reader = GameReader(proc, codes=self.config.potion_codes(),
                                 merc_txtfiles=self.config.merc_txtfiles_set(),
@@ -1241,10 +1273,13 @@ class MainApp(ctk.CTk):
                               message="Connected, scanning for unit-table offset (be in a game)."))
                 threading.Thread(target=self._background_discover, daemon=True).start()
         except ProcessNotFound:
-            self._set_status("Game not running", WARN)
+            self._set_status("Game not found", WARN)
         except Exception as exc:
             self._set_status("Attach failed", DANGER)
             self.on_event(m.GameEvent(kind="error", message=f"Attach failed: {exc}"))
+        finally:
+            self._connecting = False
+            self._sync_connect_button()
 
     def _background_discover(self):
         """Try the structural UnitTable scan in the background after connect."""
@@ -1266,6 +1301,7 @@ class MainApp(ctk.CTk):
             self.watcher.stop()
         self.proc = self.reader = self.watcher = None
         self.connected = False
+        self._sync_connect_button()
 
     def _poll(self):
         """Periodic UI refresh: watch for game close, update the dashboard,
@@ -1290,11 +1326,17 @@ class MainApp(ctk.CTk):
                             self._last_discover = now
                             threading.Thread(target=self._background_discover,
                                              daemon=True).start()
-            else:
+            elif not self._connecting:
+                # Not attached: a cheap process-name snapshot decides whether a
+                # (potentially seconds-long) connect attempt is even worth
+                # starting — no offset searching without a running game.
                 now = time.time()
-                if now - self._last_connect_attempt > 3:
+                if now - self._last_connect_attempt > 2:
                     self._last_connect_attempt = now
-                    self._try_connect()
+                    if find_d2r_processes():
+                        self._try_connect()
+                    else:
+                        self._set_status("Game not found", WARN)
         except Exception:
             pass
         self.after(150, self._poll)
