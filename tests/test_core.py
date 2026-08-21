@@ -951,6 +951,38 @@ class WatcherTests(unittest.TestCase):
         w._tick(self._snap(hp=90, mana=90, merc=40))
         self.assertEqual(w.sender.pressed, ["merc_heal"])
 
+    def test_merc_rejuv_reaches_buried_rejuv_when_opted_in(self):
+        # Merc at its rejuv line with no rejuv in row 0: critical parity lets
+        # reach-buried-rejuv drink through the stack above the rejuv.
+        w = self._watcher()
+        w.config.reach_buried_rejuv = True
+        pc = m.PotionCounts()
+        pc.ok = True
+        pc.belt_rows = 2
+        pc.belt_filled = [0, 4]
+        pc.belt_slots = {0: "heal", 4: "rejuv"}
+        pc.columns = [m.BeltColumn(key="Q", index=0, txt=602, kind="heal",
+                                   grade=0, count=2)]
+        snap = self._snap(hp=90, mana=90, merc=20)
+        snap.potion_counts = pc
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("merc_rejuv", "Q")])
+
+    def test_merc_rejuv_buried_needs_opt_in(self):
+        # Without reach-buried-rejuv the buried rejuv is not drunk (no waste).
+        w = self._watcher()
+        pc = m.PotionCounts()
+        pc.ok = True
+        pc.belt_rows = 2
+        pc.belt_filled = [0, 4]
+        pc.belt_slots = {0: "heal", 4: "rejuv"}
+        pc.columns = [m.BeltColumn(key="Q", index=0, txt=602, kind="heal",
+                                   grade=0, count=2)]
+        snap = self._snap(hp=90, mana=90, merc=20)
+        snap.potion_counts = pc
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed, [])
+
     def test_tick_noop_when_fine(self):
         w = self._watcher()
         w._tick(self._snap(hp=90, mana=90))
@@ -1434,6 +1466,48 @@ class KeysTests(unittest.TestCase):
         self.assertEqual(_gip_payload(0x10, 0x01)[0], 0x10)
         self.assertEqual(_gip_payload(0x10, 0x01)[1], 0x01)
         self.assertEqual(len(_gip_payload()), 14)
+
+    def test_gip_payload_left_trigger_byte(self):
+        from d2r.keys import _gip_payload
+        # Probe-verified: payload[3] is the left trigger axis (0-255).
+        self.assertEqual(_gip_payload(left_trigger=255)[3], 255)
+        self.assertEqual(_gip_payload(left_trigger=128)[3], 128)
+        self.assertEqual(_gip_payload()[3], 0)
+        self.assertEqual(_gip_payload(0, 0x01)[3], 0)
+
+    def test_gamepad_merc_feed_holds_left_trigger(self):
+        from d2r.keys import KeySender, XboxSyntheticGamepad
+
+        class RecordingGamepad(XboxSyntheticGamepad):
+            def __init__(self):
+                super().__init__()
+                self.payloads: list[bytes] = []
+
+            def connect(self):
+                return True
+
+            def send(self, payload):
+                self.payloads.append(bytes(payload))
+                return True
+
+        c = cfg.AppConfig.load()
+        c.reset_to_defaults()
+        c.use_gamepad = True
+        c.behavior["sound"] = False
+        s = KeySender(c)
+        pad = RecordingGamepad()
+        s._gamepad = pad
+        # Merc feed: LT held during the tap (D2R controller feed-merc binding).
+        self.assertTrue(s.press("merc_heal", key="Q"))
+        tap = pad.payloads[0]
+        self.assertEqual(tap[1] & 0x04, 0x04)   # DPAD_LEFT bit set
+        self.assertEqual(tap[3], 0xFF)          # LT held for the tap
+        self.assertEqual(pad.payloads[-1][3], 0)   # released afterwards
+        # Player drinks never touch LT.
+        pad.payloads.clear()
+        self.assertTrue(s.press("heal", key="Q"))
+        self.assertEqual(pad.payloads[0][1] & 0x04, 0x04)
+        self.assertEqual(pad.payloads[0][3], 0)
 
     def test_gip_button_bits_cover_gamepad_map(self):
         from d2r.keys import _GIP_BUTTONS_MSB, _GIP_BUTTONS_LSB, XINPUT_BUTTON_MAP

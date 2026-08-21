@@ -244,11 +244,16 @@ _GIP_BUTTONS_LSB = {  # payload[0]
 }
 
 
-def _gip_payload(buttons_lsb: int = 0, buttons_msb: int = 0) -> bytes:
-    """14-byte GIP gamepad input report (all values little-endian)."""
+def _gip_payload(buttons_lsb: int = 0, buttons_msb: int = 0,
+                 left_trigger: int = 0) -> bytes:
+    """14-byte GIP gamepad input report (all values little-endian).
+
+    Probe-verified on this build: [0..1] = buttons, [3] = left trigger
+    0-255 (byte[2] does not register as a trigger)."""
     payload = bytearray(14)
     payload[0] = buttons_lsb & 0xFF
     payload[1] = buttons_msb & 0xFF
+    payload[3] = left_trigger & 0xFF
     return bytes(payload)
 
 
@@ -313,9 +318,13 @@ class XboxSyntheticGamepad:
         rc = send(self._handle, _SYNTH_REPORT_TYPE_GAMEPAD, buf, len(payload))
         return rc == 0
 
-    def press(self, buttons_lsb: int = 0, buttons_msb: int = 0) -> bool:
-        """Press (hold ~50ms) then release a button set, as one tap."""
-        if not self.send(_gip_payload(buttons_lsb, buttons_msb)):
+    def press(self, buttons_lsb: int = 0, buttons_msb: int = 0,
+              left_trigger: int = 0) -> bool:
+        """Press (hold ~50ms) then release, as one tap.
+
+        ``left_trigger`` (0-255) is held for the whole tap — the D2R controller
+        feed-to-merc binding is LT + potion direction."""
+        if not self.send(_gip_payload(buttons_lsb, buttons_msb, left_trigger)):
             return False
         time.sleep(0.05)
         return self.send(_gip_payload())
@@ -419,20 +428,22 @@ class KeySender:
         """Tap the gamepad D-pad direction for an action.
 
         Column letters map to D-pad directions per the game defaults
-        (Q=Left, W=Up, E=Down, R=Right).  Merc actions press the same
-        direction — D2R has no feed-merc modifier for gamepad input."""
+        (Q=Left, W=Up, E=Down, R=Right).  Merc actions hold LT while tapping —
+        the D2R controller feed-to-merc binding (LT + potion direction); without
+        it the PLAYER would drink the potion instead."""
         key_name = key if key else self._fallback_key(action)
         dpad_map = {"Q": "DPAD_LEFT", "W": "DPAD_UP", "E": "DPAD_DOWN", "R": "DPAD_RIGHT"}
         dpad = dpad_map.get(key_name, "")
         if not dpad:
             print(f"[keys] No D-pad mapping for column '{key_name}'")
             return False
+        lt = 0xFF if action.startswith("merc_") else 0
         if not self._gamepad.connect():
             print("[keys] Gamepad unavailable — restart the app as administrator "
                   "(needs Windows 10 22H2+ with xboxgipsynthetic.dll)")
             return False
         self._ensure_game_focused()
-        ok = self._gamepad.press(0, _GIP_BUTTONS_MSB[dpad])
+        ok = self._gamepad.press(0, _GIP_BUTTONS_MSB[dpad], left_trigger=lt)
         if ok and self.config.behavior.get("sound", True):
             self.chime()
         return ok

@@ -308,8 +308,11 @@ class PotionWatcher:
         if snap.merc_alive:
             m_def = max(0, snap.merc_max_hp - snap.merc_hp)
             if snap.merc_hp_percent <= cfg.threshold("merc_rejuv_potion_at"):
+                # critical=True: parity with the player's rejuv line — enables
+                # reach-buried-rejuv (same config gate) and the unclassified
+                # best-effort so the merc never sits at 0% with potions on belt.
                 self._act("merc_rejuv", "rejuv", m_def, snap.merc_max_hp,
-                          f"Merc HP {snap.merc_hp_percent}%", snap, t)
+                          f"Merc HP {snap.merc_hp_percent}%", snap, t, critical=True)
             elif snap.merc_hp_percent <= cfg.threshold("merc_healing_potion_at"):
                 self._act("merc_heal", "heal", m_def, snap.merc_max_hp,
                           f"Merc HP {snap.merc_hp_percent}%", snap, t)

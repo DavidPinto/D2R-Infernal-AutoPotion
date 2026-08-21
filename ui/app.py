@@ -587,8 +587,9 @@ class MainApp(ctk.CTk):
                      "(xboxgipsynthetic.dll — ships with Windows 10 22H2+ "
                      "updates; no drivers, nothing to install) and taps the "
                      "D-pad for belt actions: Q=Left, W=Up, E=Down, R=Right.  "
-                     "Requires the app to run as administrator (Windows asks "
-                     "once at launch).").pack(anchor="w", padx=12, pady=(0, 4))
+                     "Mercenary feeds hold LT while tapping (the controller "
+                     "feed-merc binding).  Requires the app to run as "
+                     "administrator (Windows asks once at launch).").pack(anchor="w", padx=12, pady=(0, 4))
 
         w.heading(body, "Mercenary potion modifier").pack(anchor="w", padx=12, pady=(4, 4))
         merc = ctk.CTkFrame(body, fg_color="transparent")

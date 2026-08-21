@@ -5,6 +5,30 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.7-beta] - 2026-08-21
+
+### Fixed (merc parity + gamepad merc feed)
+- **Gamepad merc feed was broken**: merc actions tapped the bare D-pad, so in
+  gamepad mode the *player* drank the potion instead of the merc.  The synthetic
+  pad now holds **LT** while tapping (the D2R controller feed-merc binding,
+  LT + potion direction).  Probe-verified on this build: GIP report byte[3] is
+  the left-trigger axis (0-255) and registers via XInputGetState; byte[2]
+  does not.
+- **Merc rejuv now has critical parity with the player's rejuv line**: at/below
+  the merc rejuv threshold the action runs as critical, enabling
+  reach-buried-rejuv (same opt-in config gate — it is wasteful by design) and
+  the unclassified-column best-effort so the merc no longer sits at 0% while
+  potions are on an uncalibrated belt.  Merc heal at its normal threshold stays
+  non-critical, matching the player's non-critical heal.
+- Already shared with the player logic (verified, unchanged): grade-aware
+  column picking, the waste guard (`merc_heal` keyed per action; rejuv exempt),
+  same/higher-grade half-duration gate and weaker-grade margin, cooldowns,
+  managed columns, out-of-stock suppression.
+
+Test suite: **135 tests green** (4 new: GIP trigger byte, LT-held merc feed
+with a recording gamepad, buried-rejuv parity with/without the opt-in);
+compileall + headless UI smoke pass.
+
 ## [1.9.6-beta] - 2026-08-21
 
 ### Changed (cleanup & UI polish — no behavior changes)
