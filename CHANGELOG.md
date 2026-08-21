@@ -5,6 +5,13 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.5-beta] - 2026-08-21
+
+### Changed
+- **Desperation Mode Renamed:** Renamed "Desperation Mode" to "Reach Buried Rejuv" across the UI and codebase to better reflect the underlying logic.
+- **Predictive Drinking UI:** Added a visible checkbox in the Keys/Refill tab to toggle predictive drinking (drain-slope and poison anticipation) on or off. Includes a descriptive tooltip for non-technical users.
+- When predictive drinking is off, potions are now consumed exactly at the threshold slider values, bypassing predictive lead logic.
+
 ## [1.9.4-beta] - 2026-08-20
 
 ### Added (granular monitoring — decision logic, no new config)
