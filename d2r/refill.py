@@ -26,7 +26,7 @@ def refillable_potions(potions: list[dict]) -> list[dict]:
 
 def plan_refills(belt_empty: list[int], potions: list[dict],
                  last_kind: str | None = None) -> list[dict]:
-    """Plan one potion click per empty belt slot (dumb tier).
+    """Plan one potion click per empty belt slot (basic refill).
 
     Prefers a potion of the same family as the one that was just drunk
     (``last_kind``) so the belt naturally restocks what gets consumed; falls back
@@ -58,7 +58,7 @@ def belt_fill_order(belt_empty: list[int]) -> list[int]:
 
     D2R places a clicked potion into the lowest empty slot scanning bottom row
     left-to-right, then the row above.  Keeping the same order here means the
-    plan's ``slot`` matches what the game actually fills, which the Smart tier
+    plan's ``slot`` matches what the game actually fills, which the layout-aware
     uses to drive a per-slot layout.  Slots with an unknown row are kept at the
     end in ascending order."""
     cols = len(m.BELT_COLUMN_KEYS)
@@ -72,7 +72,7 @@ def belt_fill_order(belt_empty: list[int]) -> list[int]:
     return order
 
 
-# ----------------------------------------------------------------- smart tier
+# --------------------------------------------------- layout-aware planners
 def _allowed_for(managed) -> tuple:
     """Belt column keys the app may use: every managed column.
 
@@ -139,9 +139,9 @@ def plan_consume(hp_percent, mana_percent, hp_def, mp_def, max_hp, max_mana,
         "wrong" slot is still drunk, never wasted).
       * Only mana is low -> the mana equivalent.
       * Non-critical: heal and mana fire independently at their thresholds.
-    When the belt is unreadable the plan behaves like the plain tier (rejuv
-    wins if critical, heal/mana at their thresholds); the watcher presses the
-    action's fallback key since no column can be picked."""
+    When the belt is unreadable the plan falls back to the plain thresholds
+    (rejuv wins if critical, heal/mana at their thresholds); the watcher presses
+    the action's fallback key since no column can be picked."""
     acts: list[dict] = []
     missing: list[str] = []
     hp_critical = hp_percent <= rejuv_life
@@ -212,7 +212,7 @@ def plan_consume(hp_percent, mana_percent, hp_def, mp_def, max_hp, max_mana,
 
 def plan_moves(belt_content: dict, layout: dict, belt_empty: list,
                belt_rows: int | None = None) -> list[dict]:
-    """Relocate potions sitting in the wrong belt column (smart tier).
+    """Relocate potions sitting in the wrong belt column (layout-aware).
 
     ``belt_content`` maps belt slot X -> potion kind.  A refillable potion is
     "misplaced" when its own column prefers a different kind (per-slot layout
@@ -284,7 +284,7 @@ def desired_kind_for_slot(slot_x: int, layout: dict, belt_content: dict) -> str 
 
 def plan_layout_refill(belt_empty: list[int], belt_content: dict, potions: list[dict],
                        layout: dict, last_kind: str | None = None) -> list[dict]:
-    """Smart-tier belt refill plan: one click per empty slot (in fill order).
+    """Layout-aware belt refill plan: one click per empty slot (in fill order).
 
     For each empty slot the desired kind comes from :func:`desired_kind_for_slot`
     (layout -> column family); the potion clicked is the lowest-grade inventory

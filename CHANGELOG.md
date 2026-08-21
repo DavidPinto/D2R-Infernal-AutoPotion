@@ -5,6 +5,35 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.6-beta] - 2026-08-21
+
+### Changed (cleanup & UI polish — no behavior changes)
+- **Dead prototyping scaffolding removed from the UI**: the hidden belt-refill /
+  belt-plan stubs (`_on_refill_toggle`, `_on_smart_toggle`, `_on_layout_change`,
+  `_refresh_belt_plan`, `_refresh_refill_status`, `_refresh_belt_info` and the
+  `_LAYOUT_*` maps) are gone, including a per-poll call to `_refresh_belt_info`
+  that referenced a widget that never existed (silently swallowed by the poll
+  guard).  The deferred refill *logic* in `d2r/refill.py` and its config
+  accessors are untouched.
+- **Clearer UI wording**: Dashboard help points to the Keys tab (not
+  "Triggers → Keys"); the safety-margin hint now matches the actual gate math
+  (a weaker potion waits `duration × margin`); Triggers groups the toggles
+  under a "Smart behavior" heading and tightens the predictive-drinking /
+  reach-buried-rejuv labels and hints; Calibrate's "Saved profiles" is now
+  "Saved potion codes" with a note distinguishing them from the top-bar
+  config profiles; Diagnostics hint rewritten (run in-game, all signatures
+  must read RESOLVED / plausible: YES).
+- **Tooltips**: new `ui/widgets.Tooltip` (hover popup, plain tkinter) wired to
+  the topbar Reconnect / enable / Hotkey controls.
+- **Comment pass**: watcher module docstring rewritten to the current decision
+  flow (plan_consume + pre-drink + waste guard + grade gate, predictive
+  toggle noted); stale "smart/plain tier" wording replaced across
+  watcher/refill/config comments.
+- Repo root cleaned: the one-off `patch_*.py` prototyping scripts are removed
+  (the leftover `patch_docs.py` moved to the temp folder).
+
+Test suite: **131 tests green**; compileall + headless UI smoke pass.
+
 ## [1.9.5-beta] - 2026-08-21
 
 ### Changed

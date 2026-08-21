@@ -146,6 +146,8 @@ class MainApp(ctk.CTk):
         self.reconnect_btn = ctk.CTkButton(bar, text="Reconnect", width=90,
                                            command=self._reconnect)
         self.reconnect_btn.pack(side="left", padx=(0, 12))
+        w.attach_tooltip(self.reconnect_btn,
+                         "Drop the connection and re-attach to D2R, re-resolving offsets.")
 
         self.enable_btn = ctk.CTkButton(bar, text="DISABLED", width=140, height=34,
                                         fg_color=DANGER, hover_color="#c0392b",
@@ -153,6 +155,8 @@ class MainApp(ctk.CTk):
                                         command=self._toggle_enabled)
         self._sync_enable_button()
         self.enable_btn.pack(side="right", padx=(0, 6))
+        w.attach_tooltip(self.enable_btn,
+                         "Turn auto-potion drinking on/off (same as the global hotkey).")
 
         self._hotkey_state = ctk.CTkLabel(bar, text="", font=ctk.CTkFont(size=11),
                                           text_color="gray60")
@@ -162,6 +166,9 @@ class MainApp(ctk.CTk):
                                          font=ctk.CTkFont(size=11),
                                          command=self._toggle_hotkey_capture)
         self._hotkey_btn.pack(side="right", padx=(0, 8))
+        w.attach_tooltip(self._hotkey_btn,
+                         "Set a global key combo that toggles auto-potion — works while "
+                         "the game has focus. Hold Ctrl/Alt/Shift + a key; Esc clears.")
 
         self._build_quickbar()
 
@@ -279,7 +286,7 @@ class MainApp(ctk.CTk):
 
         help_text = ("The tool watches your HP / Mana / Mercenary and presses the belt keys "
                      "you configured. Make sure your potions are placed in the matching belt "
-                     "slots (Triggers → Keys). Enable with the button top-right.")
+                     "slots (Keys tab). Enable with the button top-right.")
         w.hint(parent, help_text).pack(anchor="w", padx=12, pady=(14, 0))
 
     def _update_dashboard(self, snap: m.PlayerSnapshot):
@@ -383,6 +390,9 @@ class MainApp(ctk.CTk):
                      "supply and manual maxes are untouched.").pack(anchor="w", padx=12, pady=(0, 8))
 
         w.heading(body, "Trigger thresholds (%)").pack(anchor="w", padx=12, pady=(4, 4))
+        w.hint(body, "The app drinks when a bar drops to its threshold.  Rejuv lines "
+                     "are the emergency reserve: at/below them the app prefers a "
+                     "rejuvenation potion (instant restore).").pack(anchor="w", padx=12, pady=(0, 2))
         self._trigger_sliders: dict[str, object] = {}
         for key, label in (("healing_potion_at", "Health potion at HP ≤"),
                            ("mana_potion_at", "Mana potion at MP ≤"),
@@ -403,35 +413,41 @@ class MainApp(ctk.CTk):
         frame.pack(fill="x", padx=12, pady=2)
         self._margin_slider = frame
         w.hint(body, "Potions restore over time, not instantly.  A same-or-stronger "
-                     "potion can be drunk again once the one in effect is half "
-                     "consumed; this margin is how long a WEAKER potion is held "
-                     "back after the in-effect potion has finished restoring, so "
-                     "it never drags the fill rate down.  Rejuvenation is instant.").pack(anchor="w", padx=12, pady=(0, 4))
+                     "potion may be drunk again once the one in effect is half "
+                     "consumed; a WEAKER potion waits this percentage of the "
+                     "in-effect potion's restore duration first, so stacking down "
+                     "never slows the fill rate.  Rejuvenation is instant.").pack(anchor="w", padx=12, pady=(0, 4))
 
-        # Predictive Drinking
+        # --- smart behavior toggles -----------------------------------------
+        w.heading(body, "Smart behavior").pack(anchor="w", padx=12, pady=(8, 2))
         predictive_frame = ctk.CTkFrame(body, fg_color="transparent")
         predictive_frame.pack(fill="x", padx=12, pady=(4, 2))
         self._predictive_var = ctk.BooleanVar(value=self.config.behavior.get("predictive_drinking", True))
         predictive_cb = ctk.CTkCheckBox(predictive_frame,
-            text="Predictive Drinking: pre-drink before bars empty (compensates for drain & poison)",
+            text="Predictive drinking (drink slightly before a bar empties)",
             variable=self._predictive_var,
             command=self._on_predictive_toggle)
         predictive_cb.pack(side="left")
-        w.hint(predictive_frame, "Predicts how fast you lose Life/Mana and drinks slightly early so the potion has time to work. Also drinks immediately if poisoned. If OFF, drinks exactly at the threshold slider values.").pack(anchor="w", padx=4)
+        w.hint(predictive_frame, "Tracks how fast you lose Life/Mana and starts the potion "
+                      "just before the threshold is crossed, so its restore-over-time has "
+                      "already begun when the bar runs dry (no more empty-mana casting). "
+                      "Also drinks immediately when you are poisoned.  OFF = drink exactly "
+                      "at the slider thresholds.").pack(anchor="w", padx=4)
 
         # Reach Buried Rejuv
         panic_frame = ctk.CTkFrame(body, fg_color="transparent")
         panic_frame.pack(fill="x", padx=12, pady=(4, 2))
         self._panic_var = ctk.BooleanVar(value=self.config.reach_buried_rejuv)
         panic_cb = ctk.CTkCheckBox(panic_frame,
-            text="Reach Buried Rejuv: when HP critical, drink through potions to reach a rejuv (wasteful, respects empty slots)",
+            text="Reach buried rejuv (emergency; wastes potions)",
             variable=self._panic_var,
             command=self._on_panic_toggle)
         panic_cb.pack(side="left")
-        w.hint(panic_frame, "When HP is at/below rejuv threshold: drink through potions above a rejuv to reach it. "
-                     "WASTEFUL - may consume multiple potions to clear a path. "
-                     "Respects empty slots (potions don't drop through empty space). "
-                     "Only enable if you accept wasting potions to survive.").pack(anchor="w", padx=24, pady=(0, 4))
+        w.hint(panic_frame, "When HP hits the rejuv line and no rejuv sits in row 0 of any "
+                     "managed column: drink the potions stacked above a rejuv to bring it "
+                     "into reach.  Potions cannot drop through empty slots, so only columns "
+                     "with a full stack above the rejuv qualify.  WASTEFUL - enable only if "
+                     "surviving is worth the potions.").pack(anchor="w", padx=24, pady=(0, 4))
 
         ctk.CTkButton(body, text="Reset to defaults", fg_color="#444",
                       hover_color="#555", command=self._reset_triggers).pack(anchor="w", padx=12, pady=14)
@@ -513,7 +529,6 @@ class MainApp(ctk.CTk):
             for key, ent in self._max_entries.items():
                 ent.delete(0, "end")
                 ent.insert(0, str(self.config.max_override.get(key, 0)))
-            self._refresh_belt_plan()
             self._refresh_profile_menu()
             self._emit_log(f"Profile '{name}' loaded.", "info")
         else:
@@ -646,7 +661,7 @@ class MainApp(ctk.CTk):
         self.config.behavior["poll_interval_ms"] = int(round(value))
         self.config.save()
 
-    # ------------------------------------------- belt columns + refill UI
+    # ------------------------------------------------------- belt columns
     def _refresh_managed(self):
         managed = set(self.config.managed_columns())
         for col, box in self._managed_boxes.items():
@@ -678,77 +693,6 @@ class MainApp(ctk.CTk):
         self.config.save()
         self._refresh_belt_keys()
         self._belt_keys_hint.configure(text="")
-
-    def _on_refill_toggle(self):
-        self.config.set_refill_enabled(bool(self._refill_switch.get()))
-        self.config.save()
-
-    # ------------------------------------------------------- smart belt plan
-    _LAYOUT_VALUE = {"Any": None, "HP": "heal", "Mana": "mana", "Rejuv": "rejuv"}
-    _LAYOUT_LABEL = {"heal": "HP", "mana": "Mana", "rejuv": "Rejuv"}
-
-    def _on_smart_toggle(self):
-        self.config.set_smart_enabled(bool(self._smart_switch.get()))
-        self.config.save()
-
-    def _on_layout_change(self, slot_x: int, value: str):
-        layout = self.config.belt_layout()
-        kind = self._LAYOUT_VALUE.get(value)
-        if kind is None:
-            layout.pop(slot_x, None)
-        else:
-            layout[slot_x] = kind
-        self.config.set_belt_layout(layout)
-        self.config.save()
-
-    def _refresh_belt_plan(self):
-        """Push the smart switch and per-slot layout grid from config."""
-        if not getattr(self, "_layout_menus", None):
-            return
-        self._smart_switch.select() if self.config.smart_enabled() else self._smart_switch.deselect()
-        layout = self.config.belt_layout()
-        for slot_x, menu in self._layout_menus.items():
-            menu.set(self._LAYOUT_LABEL.get(layout.get(slot_x), "Any"))
-
-    def _refresh_refill_status(self):
-        if getattr(self, "_refill_switch", None) is None:
-            return
-        mapping = self.config.refill_mapping()
-        belt = self.config.belt_refill_mapping()
-        inv_ok = mapping.get("calibrated")
-        belt_ok = belt.get("calibrated")
-        if inv_ok and belt_ok:
-            self._calib_status.configure(
-                text=f"Calibrated: inventory cell {float(mapping['cell']):.1f}px, origin "
-                     f"({float(mapping['origin_x']):.0f}, {float(mapping['origin_y']):.0f})  ·  "
-                     f"belt cell {float(belt['cell']):.1f}px, origin "
-                     f"({float(belt['origin_x']):.0f}, {float(belt['origin_y']):.0f})",
-                text_color=GOOD)
-        elif inv_ok or belt_ok:
-            missing = "belt panel" if inv_ok else "inventory"
-            self._calib_status.configure(
-                text=f"Partially calibrated ({'belt' if inv_ok else 'inventory'} ready). "
-                     f"Still needed: {missing}. While in-game with your inventory open, hover "
-                     f"over a potion and press F8 (twice, on different potions), then "
-                     f"'Finish & save'.",
-                text_color=WARN)
-        else:
-            self._calib_status.configure(
-                text="Not calibrated yet. While in-game with your inventory open, hover over an "
-                     "inventory potion OR a belt potion and press F8 (twice, on different "
-                     "potion cells), then click 'Finish & save'. Both the inventory page and "
-                     "the belt panel need a known grid.",
-                text_color=WARN)
-
-    def _refresh_belt_info(self):
-        pc = self.watcher.snapshot().potion_counts if self.watcher else m.PotionCounts()
-        if not pc.ok:
-            self._belt_info.configure(text="Belt: —")
-            return
-        rows = max(1, int(pc.belt_rows))
-        self._belt_info.configure(
-            text=f"Belt: {rows * 4} slots ({rows} row{'s' if rows != 1 else ''}), "
-                 f"{len(pc.belt_filled)} filled / {len(pc.belt_empty)} free")
 
     # ------------------------------------------------------- global hotkey
     def _toggle_hotkey_capture(self):
@@ -865,8 +809,6 @@ class MainApp(ctk.CTk):
         self._merc_mod_menu.set(self._merc_mod_label())
         self._refresh_managed()
         self._refresh_belt_keys()
-        self._refresh_belt_plan()
-        self._refresh_refill_status()
         self.config.save()
         self._refresh_hotkey()
 
@@ -878,7 +820,10 @@ class MainApp(ctk.CTk):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=4, pady=4)
 
-        w.heading(scroll, "Saved profiles").pack(anchor="w", padx=12, pady=(10, 4))
+        w.heading(scroll, "Saved potion codes").pack(anchor="w", padx=12, pady=(10, 4))
+        w.hint(scroll, "A 'potion code set' is the table mapping item ids to potion "
+                       "families/grades.  These are separate from the whole-config "
+                       "profiles on the top bar.").pack(anchor="w", padx=12, pady=(0, 2))
         combo_row = ctk.CTkFrame(scroll, fg_color="transparent")
         combo_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
         ctk.CTkLabel(combo_row, text="Active profile:").pack(side="left")
@@ -998,27 +943,27 @@ class MainApp(ctk.CTk):
         self._emit_log("Calibration cleared — back to built-in potion defaults.", "info")
 
     def _apply_combo(self):
-        """Switch to the combo selected in the dropdown."""
+        """Switch to the potion-code set selected in the dropdown."""
         name = self._combo_menu.get()
         if not name:
-            self._emit_log("Select a saved combo first.", "error")
+            self._emit_log("Select a saved potion-code set first.", "error")
             return
         if not self.config.set_active_combo(name):
-            self._emit_log(f"Combo '{name}' not found.", "error")
+            self._emit_log(f"Potion-code set '{name}' not found.", "error")
             return
         self._apply_codes_to_reader()
         self._refresh_combo_state()
-        self._emit_log(f"Combo '{name}' is now active.", "info")
+        self._emit_log(f"Potion codes '{name}' are now active.", "info")
 
     def _delete_combo(self):
-        """Remove the selected combo."""
+        """Remove the selected potion-code set."""
         name = self._combo_menu.get()
         if not name:
             return
         self.config.delete_combo(name)
         self._refresh_combo_menu()
         self._refresh_combo_state()
-        self._emit_log(f"Combo '{name}' deleted.", "info")
+        self._emit_log(f"Potion-code set '{name}' deleted.", "info")
 
     def _apply_codes_to_reader(self):
         """Push the active combo's codes into the live reader (no reconnect)."""
@@ -1150,9 +1095,10 @@ class MainApp(ctk.CTk):
         self.diag_hint = ctk.CTkLabel(top, text="", text_color="gray60")
         self.diag_hint.pack(side="left", padx=12)
 
-        w.hint(parent, "If 'UnitTable' is NOT RESOLVED or 'plausible: NO', the byte signatures "
-                      "in d2r/offsets.py do not match yet. Send the output below "
-                      "and we can add the correct pattern.").pack(anchor="w", padx=12, pady=(4, 6))
+        w.hint(parent, "Run this while in a game.  Every signature must read 'RESOLVED' and "
+                       "the live reads 'plausible: YES'.  If not, the built-in byte patterns "
+                       "no longer match your game build — copy the output below when asking "
+                       "for support.").pack(anchor="w", padx=12, pady=(4, 6))
 
         self.diag_box = ctk.CTkTextbox(parent, wrap="none")
         self.diag_box.pack(fill="both", expand=True, padx=12, pady=(0, 12))
@@ -1331,7 +1277,6 @@ class MainApp(ctk.CTk):
                 else:
                     snap = self.watcher.snapshot()
                     self._update_dashboard(snap)
-                    self._refresh_belt_info()
                     if snap.error and snap.error not in self._shown_errors:
                         self._shown_errors.add(snap.error)
                         self.on_event(m.GameEvent(kind="error", message=snap.error))

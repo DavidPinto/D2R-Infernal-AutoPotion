@@ -165,9 +165,9 @@ DEFAULTS = {
         "belt_origin_y": 0.0,
         "interval_ms": 400,
     },
-    # Smart-tier belt plan.  "layout" pins a potion kind per belt slot X
-    # (JSON keys are strings; "" / missing = "Any").  "ratio" is the target
-    # belt mix (counts per kind) the refill tries to keep.
+    # Belt plan (deferred feature; logic kept, UI hidden).  "layout" pins a
+    # potion kind per belt slot X (JSON keys are strings; "" / missing = "Any").
+    # "ratio" is the target belt mix (counts per kind) the refill tries to keep.
     "layout": {},
     "ratio": {"heal": 8, "mana": 6, "rejuv": 2},
 }

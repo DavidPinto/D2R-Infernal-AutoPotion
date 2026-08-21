@@ -1,19 +1,25 @@
 """The auto-potion decision loop.
 
-Logic ported from cmd/lifewatcher/watcher.go.  Each tick it reads a snapshot and
-decides which belt key to press:
+Each tick the watcher reads a snapshot and asks :func:`refill.plan_consume` for
+the drinks this tick (both stats critical -> rejuv, one stat low -> a covering
+potion of that kind else rejuv, else both at their thresholds).  The merc is
+handled separately with its own thresholds.  On top of the plain thresholds sit
+three granular layers (see _effective_percents / _in_effect_covers /
+_effective_cooldown):
 
-    if HP% <= rejuv_at_life  OR  MP% < rejuv_at_mana : rejuv
-    elif HP% <= heal_at                               : health potion
-    elif MP% <= mana_at                               : mana potion
-    if merc alive:
-        if merc HP% <= merc_rejuv_at : Shift + rejuv   (preferred)
-        elif merc HP% <= merc_heal_at: Shift + heal
+* pre-drink  - when a bar is draining toward its threshold fast enough to cross
+               it within the lead time, drink now so the restore-over-duration
+               potion is already delivering when the bar empties; poison puts
+               HP on the heal line regardless of slope (toggle: predictive_drinking),
+* waste guard - never re-drink while the in-effect potion's remaining restore
+               still covers the deficit (rejuv is instant and exempt),
+* grade gate - same-or-stronger may follow at half duration; weaker only after
+               duration x margin.
 
-When the belt content is readable, the key is chosen grade-aware: among the belt
-columns bound to the action, the potion with the smallest grade whose restore
-covers the deficit is used (strongest available when nothing covers it).  An
-empty/mismatched column is never pressed (no wrong potion waste).
+When the belt content is readable, the key is chosen grade-aware: among the
+managed columns the potion with the smallest grade whose restore covers the
+deficit is used (strongest available when nothing covers it).  An empty or
+mismatched column is never pressed (no wrong-potion waste).
 """
 
 from __future__ import annotations
@@ -628,6 +634,8 @@ class PotionWatcher:
         if not empty:
             return
         if self.config.smart_enabled():
+            # Layout-aware refill: relocate misplaced potions first, then fill
+            # empty slots per the per-slot plan (falls back to last-drunk kind).
             moves = refill_mod.plan_moves(
                 pc.belt_slots, self.config.belt_layout(), pc.belt_empty)
             moves = [mv for mv in moves
@@ -643,6 +651,7 @@ class PotionWatcher:
                 step = {"action": "refill", "slot": plan[0]["slot"],
                         "potion": plan[0]["potion"]}
         else:
+            # Basic refill: restock what was just drunk, else any potion.
             plan = refill_mod.plan_refills(empty, self.reader.inventory_potions(),
                                            last_kind=self._last_kind or None)
             if not plan:

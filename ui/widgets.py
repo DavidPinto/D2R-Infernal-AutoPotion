@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import tkinter
+
 import customtkinter as ctk
 
 # Shared palette (dark theme accent).
@@ -22,6 +24,58 @@ def hint(parent, text: str) -> ctk.CTkLabel:
     """A muted, wrapping helper-text label."""
     return ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=11),
                         text_color="gray60", justify="left", wraplength=420)
+
+
+class Tooltip:
+    """Hover tooltip for any widget (plain tkinter Toplevel; CTk has none).
+
+    Shows after a short delay so quick mouse-overs never flash a popup."""
+
+    def __init__(self, widget, text: str, delay_ms: int = 550):
+        self._widget = widget
+        self._text = text
+        self._delay = delay_ms
+        self._after_id: str | None = None
+        self._tip: tkinter.Toplevel | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._after_id = self._widget.after(self._delay, self._show)
+
+    def _cancel(self):
+        if self._after_id:
+            try:
+                self._widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _show(self):
+        if self._tip or not self._text:
+            return
+        x = self._widget.winfo_rootx() + 10
+        y = self._widget.winfo_rooty() + self._widget.winfo_height() + 6
+        self._tip = tw = tkinter.Toplevel(self._widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        ctk.CTkLabel(tw, text=self._text, justify="left",
+                     font=ctk.CTkFont(size=11), fg_color="#222222",
+                     text_color="gray85", corner_radius=6).pack(padx=8, pady=5)
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self._tip:
+            self._tip.destroy()
+            self._tip = None
+
+
+def attach_tooltip(widget, text: str) -> None:
+    """Bind a hover tooltip to ``widget`` (no-op when text is empty)."""
+    if text:
+        Tooltip(widget, text)
 
 
 def labeled_slider(parent, label: str, minimum: float, maximum: float,
