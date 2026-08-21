@@ -27,6 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Test suite: **136 tests green** (new: exe allow-list is D2R-only); compileall +
 headless UI smoke pass.
 
+### Docs & repo hygiene
+- `agents.md` (agent working notes) and stray `output.txt` are no longer part
+  of the repository (ignored locally; the file stays on disk for development).
+- `APP_FEATURES.md` rewritten for 1.9.8-beta: feature matrix now covers the
+  waste guard, predictive drinking, poison detection, gamepad input incl. LT
+  merc feed, Reach Buried Rejuv (renamed from Desperation Mode) and the new
+  connect flow; four new step-by-step scenarios (waste guard, pre-drink,
+  poison, gamepad feed); config defaults corrected.
+- `README.md`: feature list reflects current behavior (no "smart tier"/"Panic
+  Mode" wording), How-It-Works includes predict/guard steps, project layout
+  updated, legacy section refreshed.
+
 ## [1.9.7-beta] - 2026-08-21
 
 ### Fixed (merc parity + gamepad merc feed)

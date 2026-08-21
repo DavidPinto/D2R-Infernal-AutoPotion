@@ -12,6 +12,13 @@ dist/
 
 # App runtime data (auto-created config)
 config/
+*.log
+
+# Not part of the app: agent working notes stay local only
+agents.md
+
+# Stray tool output
+output.txt
 
 # Editors / OS
 .idea/
