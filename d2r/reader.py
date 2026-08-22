@@ -853,6 +853,7 @@ class GameReader:
             snap.mana_percent = mp_pct
             snap.states = self._read_unit_states(unit)
             snap.poisoned = m.STATE_POISON in snap.states
+            snap.monsters_engaged = self.engaged_monsters_near(12)
             merc = self._read_merc()
             if merc is not None:
                 # The merc's Life is a fraction of max, so a full merc reads

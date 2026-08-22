@@ -329,6 +329,21 @@ class XboxSyntheticGamepad:
         time.sleep(0.05)
         return self.send(_gip_payload())
 
+    def press_modifier_first(self, buttons_msb: int,
+                             left_trigger: int = 255) -> bool:
+        """Hold the modifier first, THEN tap the button, then release both.
+
+        A same-frame LT+direction report can be missed by games whose input
+        handler needs to see the modifier held on an earlier frame before the
+        direction edge — humans hold LT well before tapping."""
+        if not self.send(_gip_payload(left_trigger=left_trigger)):
+            return False
+        time.sleep(0.15)
+        if not self.send(_gip_payload(0, buttons_msb, left_trigger)):
+            return False
+        time.sleep(0.08)
+        return self.send(_gip_payload())
+
     def disconnect(self) -> None:
         """Disconnect + remove the controller (best-effort)."""
         if self._handle is None:
@@ -443,7 +458,11 @@ class KeySender:
                   "(needs Windows 10 22H2+ with xboxgipsynthetic.dll)")
             return False
         self._ensure_game_focused()
-        ok = self._gamepad.press(0, _GIP_BUTTONS_MSB[dpad], left_trigger=lt)
+        if lt:
+            ok = self._gamepad.press_modifier_first(_GIP_BUTTONS_MSB[dpad],
+                                                    left_trigger=lt)
+        else:
+            ok = self._gamepad.press(0, _GIP_BUTTONS_MSB[dpad])
         if ok and self.config.behavior.get("sound", True):
             self.chime()
         return ok

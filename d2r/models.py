@@ -649,6 +649,7 @@ class PlayerSnapshot:
     open_menu_names: list = field(default_factory=list)
     states: frozenset = frozenset()   # active unit states (state ids, see STATE_*)
     poisoned: bool = False            # STATE_POISON present (poison keeps ticking)
+    monsters_engaged: int = 0         # fighting-mode units within melee radius
     error: str = ""
 
     @property

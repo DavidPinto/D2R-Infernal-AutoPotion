@@ -1135,6 +1135,28 @@ class WatcherTests(unittest.TestCase):
         w._tick(snap)
         self.assertEqual(w.sender.pressed_keys, [("heal", "Q")])
 
+    def test_engaged_monsters_double_pre_drink_lead(self):
+        # Draining toward the 60% line in 1.5 s: inside the doubled lead while
+        # melee-engaged, outside the normal 1 s lead when not.
+        for engaged, expect_press in ((1, True), (0, False)):
+            w = self._watcher()
+            w.config.thresholds["healing_potion_at"] = 30
+            w.config.thresholds["mana_potion_at"] = 60
+            clock = {"t": 100.0}
+            w._now = lambda: clock["t"]
+            snap = self._belt_snap(hp=190, mana=190, max_hp=200, max_mana=200,
+                                   columns=[self._col("R", 611)])
+            snap.monsters_engaged = engaged
+            w._tick(snap)                              # one sample: no slope
+            self.assertEqual(w.sender.pressed, [])
+            clock["t"] = 100.25                        # -40 MP/s -> 1.5 s to line
+            snap = self._belt_snap(hp=190, mana=180, max_hp=200, max_mana=200,
+                                   columns=[self._col("R", 611)])
+            snap.monsters_engaged = engaged
+            w._tick(snap)
+            want = [("mana", "R")] if expect_press else []
+            self.assertEqual(w.sender.pressed_keys, want)
+
     def test_poison_reason_shows_real_percentage(self):
         # The event log must show the REAL hp%, not the poison-clamped
         # decision percent (user-visible bug: "HP 79%" while actually 85%).
@@ -1544,12 +1566,14 @@ class KeysTests(unittest.TestCase):
         s = KeySender(c)
         pad = RecordingGamepad()
         s._gamepad = pad
-        # Merc feed: LT held during the tap (D2R controller feed-merc binding).
+        # Merc feed: LT held BEFORE the direction edge (modifier-first), kept
+        # through the tap, then everything released.
         self.assertTrue(s.press("merc_heal", key="Q"))
-        tap = pad.payloads[0]
-        self.assertEqual(tap[1] & 0x04, 0x04)   # DPAD_LEFT bit set
-        self.assertEqual(tap[3], 0xFF)          # LT held for the tap
-        self.assertEqual(pad.payloads[-1][3], 0)   # released afterwards
+        seq = pad.payloads
+        self.assertEqual(seq[0][3], 0xFF)               # LT down alone first
+        self.assertEqual(seq[1][1] & 0x04, 0x04)        # DPAD_LEFT bit set
+        self.assertEqual(seq[1][3], 0xFF)               # LT still held for tap
+        self.assertEqual(seq[-1][3], 0)                 # released afterwards
         # Player drinks never touch LT.
         pad.payloads.clear()
         self.assertTrue(s.press("heal", key="Q"))

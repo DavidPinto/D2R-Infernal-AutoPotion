@@ -262,7 +262,11 @@ class PotionWatcher:
         cfg = self.config
         t = self._now()
         self._vitals.append((t, snap.hp, snap.mana))
-        hp_pct, mp_pct = self._effective_percents(snap, t)
+        # Melee-range fighting doubles the pre-drink lead: start potions even
+        # earlier when something is actively swinging at us (validated rule:
+        # mode-based engagement has zero town false positives).
+        engaged = getattr(snap, "monsters_engaged", 0) > 0
+        hp_pct, mp_pct = self._effective_percents(snap, t, lead=_PRE_DRINK_LEAD * (2 if engaged else 1))
         hp_def = max(0, snap.max_hp - snap.hp)
         mp_def = max(0, snap.max_mana - snap.mana)
         hp_critical = hp_pct <= cfg.threshold("rejuv_potion_at_life")
@@ -350,7 +354,8 @@ class PotionWatcher:
             return 0.0
         return (v1 - limit) / (-slope)
 
-    def _effective_percents(self, snap: m.PlayerSnapshot, now: float) -> tuple:
+    def _effective_percents(self, snap: m.PlayerSnapshot, now: float,
+                            lead: float = _PRE_DRINK_LEAD) -> tuple:
         """HP/MP percentages after granular-urgency adjustments.
 
         Pre-drink: when a stat is draining toward its threshold fast enough to
@@ -368,11 +373,11 @@ class PotionWatcher:
         mp_pct = snap.mana_percent
         dt_hp = self._predict_drop(snap.max_hp,
                                    cfg.threshold("healing_potion_at"), series=0)
-        if dt_hp is not None and dt_hp <= _PRE_DRINK_LEAD:
+        if dt_hp is not None and dt_hp <= lead:
             hp_pct = min(hp_pct, cfg.threshold("healing_potion_at") - 1)
         dt_mp = self._predict_drop(snap.max_mana,
                                    cfg.threshold("mana_potion_at"), series=1)
-        if dt_mp is not None and dt_mp <= _PRE_DRINK_LEAD:
+        if dt_mp is not None and dt_mp <= lead:
             mp_pct = min(mp_pct, cfg.threshold("mana_potion_at") - 1)
         if snap.poisoned:
             hp_pct = min(hp_pct, cfg.threshold("healing_potion_at") - 1)

@@ -5,6 +5,33 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.11-beta] - 2026-08-22
+
+### Validated live (second test round — user-run)
+- **Keyboard merc feed works** — Shift + column key feeds the mercenary.
+- **Engagement rule validated in town**: standing next to an NPC with the merc
+  nearby, `engaged_monsters_near` reads 0 at every radius while a passive unit
+  sits within range — zero false positives, matching the combat sample that
+  caught the real attackers.  The mode+melee hostility proxy is confirmed.
+
+### Changed
+- **Melee engagement now doubles the pre-drink lead** (1 s → 2 s for both
+  bars): when something is actively swinging at you, potions start ~1 s
+  earlier.  Conservative on purpose — no forced drinks at high HP.
+- **Gamepad merc feed uses a modifier-first sequence**: hold LT (~150 ms),
+  tap the D-pad direction with LT still held, then release.  A same-frame
+  LT+direction report can be missed by input handlers that need to see the
+  modifier on an earlier frame.
+
+### Added
+- **`tools/gamepad_probe.py`** — records every change of your REAL controller
+  (buttons/triggers/sticks, all XInput slots) to `config/gamepad_scan.log`.
+  If the synthetic LT+D-pad feed still fails, perform the gesture manually
+  with this running and the log reveals the true binding.
+
+Test suite: **139 tests green** (engagement lead test); compileall + headless
+UI smoke pass.
+
 ## [1.9.10-beta] - 2026-08-22
 
 ### Validated live (first real-app test round — user-run)
