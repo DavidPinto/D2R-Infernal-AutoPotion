@@ -41,15 +41,21 @@ ACTION_LABELS = {
     "heal": "Health potion",
     "mana": "Mana potion",
     "rejuv": "Rejuvenation potion",
+    "antidote": "Antidote potion",
     "merc_heal": "Merc health potion",
     "merc_rejuv": "Merc rejuv potion",
+    "merc_antidote": "Merc antidote potion",
 }
 
 # Potion family a drink action consumes (for refill restocking preference).
 _ACTION_KIND = {
-    "heal": "heal", "mana": "mana", "rejuv": "rejuv",
-    "merc_heal": "heal", "merc_rejuv": "rejuv",
+    "heal": "heal", "mana": "mana", "rejuv": "rejuv", "antidote": "antidote",
+    "merc_heal": "heal", "merc_rejuv": "rejuv", "merc_antidote": "antidote",
 }
+
+# Instant-cure actions (no restore-over-duration): short anti-spam gate and
+# exempt from the waste guard.
+_INSTANT_ACTIONS = frozenset({"rejuv", "merc_rejuv", "antidote", "merc_antidote"})
 
 # Rejuvenation restores instantly, so it only needs a short anti-spam gate.
 _REJUV_COOLDOWN = 1.0
@@ -292,7 +298,19 @@ class PotionWatcher:
             elif act["action"] == "rejuv":
                 act["reason"] = (f"HP {snap.hp_percent}% / "
                                  f"MP {snap.mana_percent}%{marker}")
+        # Poison cure first: an antidote on the belt beats a health potion -
+        # it removes the damage source instead of out-racing it.
+        drank_antidote = False
+        if snap.poisoned:
+            anti = self._antidote_column(snap)
+            if anti is not None and self._ready("antidote", t):
+                self._out_of_stock.discard("heal")
+                self._use("antidote", f"Poisoned (HP {snap.hp_percent}%)",
+                          snap, column=anti)
+                drank_antidote = True
         for act in acts:
+            if drank_antidote and act["action"] == "heal":
+                continue    # cured this tick; heal fires next tick if still low
             kind = act["kind"]
             critical = (kind == "rejuv"
                         or (kind == "heal" and hp_critical)
@@ -304,6 +322,8 @@ class PotionWatcher:
         # wanted potion may be sitting there unrecognised, so a critical stat
         # must not just sit at 0%.
         for kind in missing:
+            if drank_antidote and kind == "heal":
+                continue
             if kind == "rejuv":
                 self._act("rejuv", "rejuv", max(hp_def, mp_def),
                           max(snap.max_hp, snap.max_mana),
@@ -317,10 +337,23 @@ class PotionWatcher:
                           f"MP {snap.mana_percent}%{marker}", snap, t, critical=True)
 
     def _merc_tick(self, snap: m.PlayerSnapshot) -> None:
-        """Mercenary decisions (only when one is present and alive)."""
+        """Mercenary decisions (only when one is present and alive).
+
+        Skipped entirely when the user disabled merc feeding (feed_merc)."""
         cfg = self.config
         t = self._now()
+        if not cfg.feed_merc:
+            return
         if snap.merc_alive:
+            # Merc poison parity: a poisoned merc gets an antidote before any
+            # threshold-based feed (same cure-first rule as the player).
+            if getattr(snap, "merc_poisoned", False):
+                anti = self._antidote_column(snap)
+                if anti is not None and self._ready("merc_antidote", t):
+                    self._use("merc_antidote",
+                              f"Merc poisoned ({snap.merc_hp_percent}%)",
+                              snap, column=anti)
+                    return
             m_def = max(0, snap.merc_max_hp - snap.merc_hp)
             if snap.merc_hp_percent <= cfg.threshold("merc_rejuv_potion_at"):
                 # critical=True: parity with the player's rejuv line — enables
@@ -443,6 +476,21 @@ class PotionWatcher:
                         return col_idx
         return None
 
+    def _antidote_column(self, snap: m.PlayerSnapshot) -> m.BeltColumn | None:
+        """Managed column whose row-0 potion is an antidote, or None.
+
+        Antidotes are not in the potion codes (they classify as utilities), so
+        they never come out of ``choose_belt_column``; this is a direct lookup.
+        Only used while poisoned - antidotes are never drunk preventively."""
+        pc = snap.potion_counts
+        if not pc.ok:
+            return None
+        managed = self.config.managed_indices()
+        for c in pc.columns:
+            if (c.kind == "antidote" and c.count > 0 and c.index in managed):
+                return c
+        return None
+
     def _act(self, action: str, kind: str, deficit: int, max_value: int,
              reason: str, snap: m.PlayerSnapshot, t: float,
              critical: bool = False) -> bool:
@@ -526,7 +574,7 @@ class PotionWatcher:
         potion waits the full duration x margin so it never drags the fill rate
         down.  Rejuv is instant and uses a short fixed gate.  Config cooldowns
         are the fallback while the potion on the belt is unknown."""
-        if action in ("rejuv", "merc_rejuv"):
+        if action in _INSTANT_ACTIONS:
             return _REJUV_COOLDOWN
         duration = self._last_potion_dur.get(action, 0.0)
         if duration > 0:
@@ -546,7 +594,7 @@ class PotionWatcher:
         while the in-effect potion alone would finish the job just burns
         potions (e.g. a Super mana potion re-drunk at 60% because its total
         restore would have topped mana up fully)."""
-        if action in ("rejuv", "merc_rejuv"):
+        if action in _INSTANT_ACTIONS:
             return False
         dur = self._last_potion_dur.get(action, 0.0)
         txt = self._last_potion_txt.get(action, 0)

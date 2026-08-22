@@ -204,6 +204,12 @@ ACTION_LABELS = {
 # 271 the Infernal Edition Warlock hireling.  Users can override per combo.
 MERC_TXTFILES_DEFAULT = frozenset({338, 271})
 
+# Antidote potion txtFileNos - cures poison instantly.  When the player or the
+# mercenary is poisoned, the watcher prefers an antidote over a health potion.
+# Live-verified on this Infernal build: 529; classic D2R counterpart 514
+# (-15 renumber).  Overridable per combo like hireling ids.
+ANTIDOTE_TXTFILES = frozenset({514, 529})
+
 
 @dataclass
 class PotionEntry:
@@ -650,6 +656,7 @@ class PlayerSnapshot:
     states: frozenset = frozenset()   # active unit states (state ids, see STATE_*)
     poisoned: bool = False            # STATE_POISON present (poison keeps ticking)
     monsters_engaged: int = 0         # fighting-mode units within melee radius
+    merc_poisoned: bool = False       # the hireling is poisoned
     error: str = ""
 
     @property

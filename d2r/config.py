@@ -105,6 +105,10 @@ DEFAULTS = {
         # THIS IS WASTEFUL - it may consume multiple potions to clear a path.
         # Respects empty slots (potions don't drop through empty space).
         "reach_buried_rejuv": False,
+        # Give potions to the mercenary (Shift/column on keyboard, LT+direction
+        # on gamepad).  When False the app never presses anything with the
+        # merc modifier - potions are saved for the player.
+        "feed_merc": True,
         # Gamepad support: use gamepad D-pad instead of keyboard for belt keys.
         # When enabled, the app sends XInput gamepad button presses instead of
         # keyboard keystrokes.  Requires a connected XInput-compatible controller.
@@ -221,6 +225,14 @@ class AppConfig:
     @enabled.setter
     def enabled(self, value: bool) -> None:
         self.behavior["enabled"] = bool(value)
+
+    @property
+    def feed_merc(self) -> bool:
+        return bool(self.behavior.get("feed_merc", True))
+
+    @feed_merc.setter
+    def feed_merc(self, value: bool) -> None:
+        self.behavior["feed_merc"] = bool(value)
 
     @property
     def reach_buried_rejuv(self) -> bool:
@@ -574,6 +586,22 @@ class AppConfig:
             if out:
                 return frozenset(out)
         return m.MERC_TXTFILES_DEFAULT
+
+    def antidote_txtfiles_set(self) -> frozenset:
+        """Antidote potion ids for the active combo override, else built-in."""
+        from . import models as m
+        body = self.active_combo()
+        ids = body.get("antidotes") if body else None
+        if ids:
+            out = set()
+            for v in ids:
+                try:
+                    out.add(int(v))
+                except (TypeError, ValueError):
+                    pass
+            if out:
+                return frozenset(out)
+        return m.ANTIDOTE_TXTFILES
 
     def save_combo(self, name: str, potions: list | None = None,
                    merc: list | None = None, notes: str = "") -> bool:

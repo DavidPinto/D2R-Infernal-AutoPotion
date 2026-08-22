@@ -1,8 +1,8 @@
 # D2R Infernal Auto Potion — Feature Status & Autopotion Logic Deep Dive
 
-**Version:** 1.9.8-beta
-**Date:** 2026-08-21
-**Test Suite:** 136 tests passing, compileall clean, headless UI smoke OK
+**Version:** 1.9.12-beta
+**Date:** 2026-08-22
+**Test Suite:** 146 tests passing, compileall clean, headless UI smoke OK
 
 ---
 
@@ -15,10 +15,12 @@
 | **Core: Rejuv Potion Drinking** | ✅ Working | Both-critical → rejuv; single-critical prefers covering → rejuv → any |
 | **Waste Guard** | ✅ Working (1.9.3) | Never re-drinks while the in-effect potion's remaining restore covers the deficit; rejuv exempt (instant) |
 | **Predictive Drinking** | ✅ Working (1.9.4/1.9.5) | Drain-slope pre-drink starts the potion before a bar empties; toggle on Triggers tab |
-| **Poison Detection** | ✅ Working (1.9.4) | Unit states bitfield (`statsListEx + 0xAF0`, state 2); poisoned ⇒ HP treated as at the heal line. Bit-flip confirmation pending a live poison hit |
+| **Poison Detection** | ✅ Working + live-confirmed (1.9.4) | Unit states bitfield (`statsListEx + 0xAF0`, state 2); poison bit confirmed against a real hit; poisoned ⇒ HP treated as at the heal line |
+| **Antidote Priority** | ✅ Working (1.9.12) | Antidotes (id 529 this build / 514 classic, combo-overridable) classify as their own kind; poisoned ⇒ antidote drunk instead of a heal that tick; never preventive |
+| **Merc Poison Parity** | ✅ Working (1.9.12) | Merc states read like the player's; poisoned merc gets an antidote fed first, else normal thresholds |
 | **Reach Buried Rejuv** | ✅ Opt-in (was "Desperation Mode") | At critical HP, drinks through a full stack above a rejuv to reach it; default OFF — wasteful by design |
-| **Core: Merc HP/Rejuv** | ✅ Working | Keyboard: belt key + modifier (Shift default). Critical parity with player rejuv line (1.9.7) |
-| **Gamepad Input** | ✅ Working (1.9.0–1.9.7) | Synthetic Xbox controller via `xboxgipsynthetic.dll`; Q/W/E/R → D-pad; merc feed holds LT + direction. Requires elevated process |
+| **Core: Merc HP/Rejuv** | ✅ Working | Keyboard Shift+column verified in-game (1.9.11); critical parity with player rejuv line (1.9.7); **Give potions to mercenary** toggle (1.9.12, default on) |
+| **Gamepad Input** | ✅ Working + live-confirmed (1.9.11) | Synthetic Xbox controller via `xboxgipsynthetic.dll`; Q/W/E/R → D-pad drinking and LT+direction merc feed both verified in-game; requires elevated process |
 | **Grade-Aware Stacking** | ✅ Working | Same/higher grade after ½ duration; weaker after full × margin% |
 | **Cooldown Gating** | ✅ Working | Derived from potion duration, config fallback when unknown; rejuv fixed 1 s gate |
 | **Belt Reading (4 columns)** | ✅ Working | Reads slot X → column = X%4, row = X//4; lowest slot = next drunk |
@@ -35,7 +37,7 @@
 | **Event Log / Session Stats** | ✅ Working | Dashboard counters, per-action counts, exportable log |
 | **Battle Orders Max Tracking** | ✅ Working | Running max follows BO boosts; manual override available |
 | **Merc True Max (item block)** | ✅ Working | Reads merged MaxLife from stats-list item block (199 vs base 189) |
-| **Enemy-Nearby Scan** | 🟡 Implemented, rule pending | `nearby_monsters` (units near) + `engaged_monsters_near` (mode-based melee hostility proxy) live-validated; threshold wiring awaits one zero-false-positive check vs town NPCs |
+| **Enemy-Nearby Scan** | ✅ Working, urgency wired (1.9.11) | `engaged_monsters_near`: mode-based melee hostility proxy — zero false positives in town, caught real attackers; doubles the pre-drink lead when engaged |
 | **Live End-to-End (real app)** | ✅ Verified 1.9.10 | Basic drinking ✓, gamepad D-pad drinking ✓, poison urgency ✓ (user-run session); mana pre-drink + potion economy partially checked |
 | **Two-Tier Polling (<30 ms)** | ⚪ Not planned | Restore durations are seconds; `poll_interval_ms` slider is sufficient |
 | **Belt Refill (click-to-move)** | 🔴 Hidden/Deferred | Logic kept (`plan_moves`, `plan_layout_refill`, `_exec_refill_step`), UI hidden — mouse-click placement not reliable enough yet |

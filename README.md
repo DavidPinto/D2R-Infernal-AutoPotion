@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit). It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.9.11-beta` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.9.12-beta` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`. See
 > [Limitations](#limitations) below.
 
@@ -29,8 +29,10 @@ presses the correct belt keys for you.
 - **Predictive drinking** — Tracks how fast you lose Life/Mana and starts the potion just before a bar empties (no more empty-mana casting); drinks immediately when you are poisoned, even in town (toggle on *Triggers*)
 - **Reach Buried Rejuv (opt-in)** — When HP is critical, can drink through potions above a Rejuv to reach it (respects empty slots; wasteful by design, default OFF)
 - **Grade-aware cooldowns** — Respects potion duration; same/higher grade can be redrunk at half duration, weaker waits full duration × margin
-- **Mercenary support** — Feeds merc potions using belt key + modifier (Shift default); in gamepad mode it holds **LT** + D-pad (the controller feed-merc binding)
-- **Gamepad mode** — Creates a real Xbox controller via Microsoft's built-in synthetic gamepad API (no drivers); Q/W/E/R → D-pad; needs the app elevated
+- **Mercenary support** — Feeds merc potions using belt key + modifier (Shift default); in gamepad mode it holds **LT** + D-pad (the controller feed-merc binding). Toggle it off entirely to save potions
+- **Merc poison parity** — The merc's poison state is read too: a poisoned merc gets an antidote fed before any threshold feed
+- **Antidote priority** — When poisoned, an antidote on the belt is drunk instead of a health potion (cure the source, don't out-race it)
+- **Gamepad mode — verified in-game** — Creates a real Xbox controller via Microsoft's built-in synthetic gamepad API (no drivers); Q/W/E/R → D-pad drinks and LT + D-pad feeds the merc; needs the app elevated
 - **Fast connect** — Attaches in the background; shows *Game not found* instead of silently searching when D2R.exe is not running
 - **Live Dashboard** — Real-time HP/Mana/Merc bars, belt + inventory potion counts, per-action potion log
 - **Calibration tab** — Teach the app your build's potion codes by putting a known potion in all 4 belt corners

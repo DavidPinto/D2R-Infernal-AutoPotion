@@ -5,6 +5,38 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.12-beta] - 2026-08-22
+
+### Validated live (third test round — user-run)
+- **Keyboard merc feed confirmed working** in real gameplay.
+- **Gamepad merc feed works** after the modifier-first fix — the synthetic
+  controller's LT + D-pad now feeds the mercenary.  The input layer is fully
+  closed: every drink path (player/merc × keyboard/gamepad) is verified.
+
+### Added
+- **Antidote priority when poisoned.**  Antidote potions (live-identified id
+  **529** on this build; classic 514 kept; combo-overridable via
+  `antidotes`) classify as their own kind.  When the player is poisoned, an
+  antidote on a managed column is drunk *instead of* a health potion that tick
+  (curing the source beats out-racing it); without one, normal logic applies.
+  Antidotes are never drunk preventively, share the rejuv 1 s gate, and are
+  exempt from the waste guard.
+- **Merc poison parity.**  The mercenary's states block is read like the
+  player's (`merc_poisoned`): a poisoned merc gets an antidote fed first
+  (Shift/column / LT+D-pad), falling back to the normal thresholds when none
+  is available.
+- **"Give potions to the mercenary" toggle** (Keys tab, default on).  Off =
+  the app never presses anything with the merc modifier — potions are saved
+  for the player.
+
+### Fixed
+- `GameReader._item_kind` self-recursion introduced mid-development (caught
+  immediately by the live belt read; never shipped in a pushed state).
+
+Test suite: **146 tests green** (7 new: antidote priority, no-same-tick heal,
+no preventive drink, instant-action gates, feed-merc toggle, merc poison
+priority + fallback); compileall + headless UI smoke pass.
+
 ## [1.9.11-beta] - 2026-08-22
 
 ### Validated live (second test round — user-run)

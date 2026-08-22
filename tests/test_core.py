@@ -983,6 +983,71 @@ class WatcherTests(unittest.TestCase):
         w._tick(snap)
         self.assertEqual(w.sender.pressed, [])
 
+    # ------------------------------------------------------------- antidote
+    def _antidote_snap(self, hp, poisoned, merc=0, merc_poisoned=False,
+                       with_antidote=True):
+        cols = []
+        if with_antidote:
+            cols.append(m.BeltColumn(key="Q", index=0, txt=529, kind="antidote",
+                                     grade=-1, count=1))
+        cols.append(self._col("W", 602))
+        snap = self._belt_snap(hp=hp, mana=190, max_hp=200, max_mana=200,
+                               columns=cols, merc=merc)
+        if merc:
+            snap.merc_poisoned = merc_poisoned
+        if poisoned:
+            snap.states = frozenset({m.STATE_POISON})
+            snap.poisoned = True
+        return snap
+
+    def test_antidote_prioritised_over_heal_when_poisoned(self):
+        w = self._watcher()
+        snap = self._antidote_snap(hp=130, poisoned=True)
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("antidote", "Q")])
+
+    def test_no_heal_drink_on_the_same_tick_as_the_cure(self):
+        w = self._watcher()
+        snap = self._antidote_snap(hp=130, poisoned=True)
+        w._tick(snap)
+        self.assertNotIn("heal", w.sender.pressed)
+
+    def test_antidote_not_drunk_when_not_poisoned(self):
+        # Antidotes are never drunk preventively.
+        w = self._watcher()
+        w.config.thresholds["healing_potion_at"] = 80
+        snap = self._antidote_snap(hp=100, poisoned=False)   # 50% -> heal fires
+        w._tick(snap)
+        self.assertEqual(w.sender.pressed_keys, [("heal", "W")])
+
+    def test_instant_actions_share_rejuv_gate_and_skip_waste_guard(self):
+        w = self._watcher()
+        for action in ("antidote", "merc_antidote"):
+            self.assertEqual(w._effective_cooldown(action), 1.0)
+            self.assertFalse(w._in_effect_covers(action, 10, 200,
+                                                 time.monotonic()))
+
+    def test_feed_merc_toggle_blocks_all_merc_feeding(self):
+        w = self._watcher()
+        w.config.feed_merc = False
+        w._tick(self._snap(hp=90, mana=90, merc=40))   # would feed merc heal
+        self.assertEqual(w.sender.pressed, [])
+
+    def test_merc_poison_gets_antidote_first(self):
+        w = self._watcher()
+        snap = self._antidote_snap(hp=190, poisoned=False,
+                                   merc=30, merc_poisoned=True)
+        w._tick(snap)   # merc at 30% (heal threshold), but poisoned: cure first
+        self.assertEqual(w.sender.pressed_keys, [("merc_antidote", "Q")])
+
+    def test_merc_without_antidote_falls_back_to_thresholds(self):
+        w = self._watcher()
+        snap = self._belt_snap(hp=190, mana=190, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 602)], merc=70)
+        snap.merc_poisoned = True
+        w._tick(snap)   # poisoned, but no antidote: normal thresholds apply
+        self.assertEqual(w.sender.pressed_keys, [("merc_heal", "Q")])
+
     def test_tick_noop_when_fine(self):
         w = self._watcher()
         w._tick(self._snap(hp=90, mana=90))

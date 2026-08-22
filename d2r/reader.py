@@ -42,6 +42,9 @@ class GameReader:
             rejuv_restore_percent=config.rejuv_restore_percent() if config else None,
         )
         self.merc_txtfiles: frozenset = merc_txtfiles if merc_txtfiles is not None else m.MERC_TXTFILES_DEFAULT
+        # Antidote potion ids (poison cure); config override when provided.
+        self.antidote_txtfiles: frozenset = (
+            frozenset(config.antidote_txtfiles_set()) if config else m.ANTIDOTE_TXTFILES)
         self.offsets: Offsets = calculate_offsets(proc)
         # A signature hit can be a false positive (e.g. a coincidental byte match
         # in an unrelated module).  Verify the resolved UnitTable actually points
@@ -266,6 +269,8 @@ class GameReader:
             "name": "",
             "type": m.MERC_TYPE.get(txt, f"Hireling ({txt})"),
             "level": level,
+            # The merc can be poisoned too (same states block as the player).
+            "poisoned": bool(unit) and m.STATE_POISON in self._read_unit_states(unit),
         }
 
     def nearby_monsters(self, radius: int = 40) -> int:
@@ -359,6 +364,16 @@ class GameReader:
         return life_disp, max_disp
 
     # ------------------------------------------------------------- potions
+    def _item_kind(self, txt: int) -> str | None:
+        """Classified kind for an item, with the antidote override.
+
+        Antidote potions otherwise classify as 'other' (utility); marking them
+        'antidote' lets the watcher prefer them when poisoned."""
+        kind = self.codes.kind(txt)
+        if kind in (None, "other") and txt in self.antidote_txtfiles:
+            return "antidote"
+        return kind
+
     def _read_item_counts(self) -> m.PotionCounts:
         """Count belt + personal-inventory potions from the client item table.
 
@@ -399,7 +414,7 @@ class GameReader:
                     break
                 if int.from_bytes(buf[0x00:0x04], "little") == m.ITEM_UNIT_TYPE:
                     txt = int.from_bytes(buf[0x04:0x08], "little")
-                    kind = self.codes.kind(txt)
+                    kind = self._item_kind(txt)
                     loc = int.from_bytes(buf[0x0C:0x10], "little")
                     ud = int.from_bytes(buf[0x10:0x18], "little")
                     owner = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_OWNER) if ud else 0
@@ -410,7 +425,9 @@ class GameReader:
                         # and the watcher can fall back to a best-effort keypress
                         # on a critical stat instead of sitting idle at 0%.
                         if kind:
-                            counts.belt[kind] += 1
+                            # Antidotes (and any future extra kind) aggregate
+                            # under 'other' so the display dicts keep their keys.
+                            counts.belt[kind if kind in counts.belt else "other"] += 1
                         path = int.from_bytes(buf[0x38:0x40], "little")
                         slot_x = self.proc.read_u16(path + m.ITEM_PATH_OFFSET_X) if path else -1
                         col = slot_x % len(m.BELT_COLUMN_KEYS) if slot_x >= 0 else 0
@@ -424,7 +441,7 @@ class GameReader:
                             page = self.proc.read_u8(ud + m.ITEM_UNIT_DATA_OFFSET_INVPAGE)
                             flags = self.proc.read_u32(ud + m.ITEM_UNIT_DATA_OFFSET_FLAGS)
                             if (owner == main_id and page == 0 and not (flags & 0x2000)):
-                                counts.inventory[kind] += 1
+                                counts.inventory[kind if kind in counts.inventory else "other"] += 1
                     elif loc == m.ITEM_LOC_EQUIPPED and owner == main_id:
                         # The equipped belt (any class of belt) tells us the grid.
                         if m.belt_rows_for(txt):
@@ -450,7 +467,7 @@ class GameReader:
             # The drinkable potion is the one in row 0 (lowest slot_x in row 0)
             next_txt = min(row0_entries, key=lambda e: e[0])[1]
             column.txt = next_txt
-            column.kind = self.codes.kind(next_txt)
+            column.kind = self._item_kind(next_txt)
             column.grade = self.codes.grade(next_txt)
 
         counts.codes = self.codes
@@ -487,7 +504,7 @@ class GameReader:
                     unit = int.from_bytes(buf[0x150:0x158], "little")
                     continue
                 txt = int.from_bytes(buf[0x04:0x08], "little")
-                kind = self.codes.kind(txt)
+                kind = self._item_kind(txt)
                 if not kind:
                     unit = int.from_bytes(buf[0x150:0x158], "little")
                     continue
@@ -542,7 +559,7 @@ class GameReader:
                     unit = int.from_bytes(buf[0x150:0x158], "little")
                     continue
                 txt = int.from_bytes(buf[0x04:0x08], "little")
-                kind = self.codes.kind(txt)
+                kind = self._item_kind(txt)
                 if not kind:
                     unit = int.from_bytes(buf[0x150:0x158], "little")
                     continue
@@ -871,6 +888,7 @@ class GameReader:
                 snap.merc_name = merc["name"]
                 snap.merc_type = merc["type"]
                 snap.merc_level = merc["level"]
+                snap.merc_poisoned = merc.get("poisoned", False)
 
             snap.potion_counts = self._read_item_counts()
 

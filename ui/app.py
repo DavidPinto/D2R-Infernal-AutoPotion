@@ -486,6 +486,8 @@ class MainApp(ctk.CTk):
         self._predictive_var.set(self.config.behavior.get("predictive_drinking", True))
         if hasattr(self, "_gamepad_var"):
             self._gamepad_var.set(self.config.use_gamepad)
+        if hasattr(self, "_feed_merc_var"):
+            self._feed_merc_var.set(self.config.feed_merc)
 
     def _reset_triggers(self):
         from d2r.config import DEFAULTS
@@ -604,6 +606,11 @@ class MainApp(ctk.CTk):
             command=self._on_merc_modifier)
         self._merc_mod_menu.pack(side="left", padx=(10, 0))
         self._merc_mod_menu.set(self._merc_mod_label())
+        self._feed_merc_var = ctk.BooleanVar(value=self.config.feed_merc)
+        feed_cb = ctk.CTkCheckBox(merc, text="Give potions to the mercenary",
+                                  variable=self._feed_merc_var,
+                                  command=self._on_feed_merc_toggle)
+        feed_cb.pack(anchor="w", pady=(6, 0))
         w.hint(body, "To give a potion to your mercenary the app holds this "
                      "modifier together with a belt hotkey (e.g. Shift + Q) — the "
                      "same feed-merc binding D2R uses.  Set it to whatever your "
@@ -643,6 +650,11 @@ class MainApp(ctk.CTk):
     def _on_merc_modifier(self, value: str):
         """Persist the feed-to-merc modifier choice."""
         self.config.set_merc_modifier(value)
+        self.config.save()
+
+    def _on_feed_merc_toggle(self):
+        """Persist the give-potions-to-merc toggle."""
+        self.config.feed_merc = bool(self._feed_merc_var.get())
         self.config.save()
 
     def _on_focus(self):
@@ -811,6 +823,8 @@ class MainApp(ctk.CTk):
         self._pause_switch.select() if self.config.behavior.get("pause_when_menus_open", True) else self._pause_switch.deselect()
         self._poll_frame.set_value(float(self.config.behavior.get("poll_interval_ms", 150)))
         self._merc_mod_menu.set(self._merc_mod_label())
+        if hasattr(self, "_feed_merc_var"):
+            self._feed_merc_var.set(self.config.feed_merc)
         self._refresh_managed()
         self._refresh_belt_keys()
         self.config.save()
