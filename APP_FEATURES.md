@@ -35,7 +35,8 @@
 | **Event Log / Session Stats** | ✅ Working | Dashboard counters, per-action counts, exportable log |
 | **Battle Orders Max Tracking** | ✅ Working | Running max follows BO boosts; manual override available |
 | **Merc True Max (item block)** | ✅ Working | Reads merged MaxLife from stats-list item block (199 vs base 189) |
-| **Enemy-Nearby Scan** | 🟡 Probe-only | Unit-chain walk verified; hostile-flag bytes not yet identified (needs a fight sample) |
+| **Enemy-Nearby Scan** | 🟡 Implemented, rule pending | `nearby_monsters` (units near) + `engaged_monsters_near` (mode-based melee hostility proxy) live-validated; threshold wiring awaits one zero-false-positive check vs town NPCs |
+| **Live End-to-End (real app)** | ✅ Verified 1.9.10 | Basic drinking ✓, gamepad D-pad drinking ✓, poison urgency ✓ (user-run session); mana pre-drink + potion economy partially checked |
 | **Two-Tier Polling (<30 ms)** | ⚪ Not planned | Restore durations are seconds; `poll_interval_ms` slider is sufficient |
 | **Belt Refill (click-to-move)** | 🔴 Hidden/Deferred | Logic kept (`plan_moves`, `plan_layout_refill`, `_exec_refill_step`), UI hidden — mouse-click placement not reliable enough yet |
 | **Belt Plan Grid (smart layout)** | 🔴 Hidden/Deferred | Logic kept (`belt_layout`, `ratio`, `desired_kind_for_slot`), UI hidden |

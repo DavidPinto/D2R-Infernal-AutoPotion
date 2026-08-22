@@ -194,6 +194,9 @@ class GameReader:
 
     # Monster modes >= this are dying/dead (DT=12, DD=13 in the classic enum).
     _MONSTER_MODE_DYING = 12
+    # Modes meaning a unit is actively fighting (gethit/attack/block/cast...).
+    # Live combat sample: melee attackers read 4/5; passive units sit at 0-2.
+    _ENGAGED_MODES = frozenset({4, 5, 6, 7, 9, 10, 11})
 
     def _read_merc(self) -> dict | None:
         """Read the mercenary unit, or None when no merc unit is in the world.
@@ -274,6 +277,20 @@ class GameReader:
         calibrated against a real fight (friendly units all read flag 0 in the
         sampled unit-data bytes).  Corpses and known hireling ids are excluded.
         Never raises; returns -1 when the player/unit table is unavailable."""
+        return self._count_monsters(radius, engaged_only=False)
+
+    def engaged_monsters_near(self, radius: int = 12) -> int:
+        """Count units within melee ``radius`` whose mode says they are fighting.
+
+        The best available hostility proxy: live samples show melee attackers
+        reading mode 4 (gethit) / 5 (attack) at distance <= 3 while every
+        passive unit — town NPCs included — sits at mode 0-2, and the sampled
+        unit-data flag bytes (0x19/0x1A/0x1B) are zero for attackers.  Dying
+        (12/13) units are excluded via the dead check; txtFileNo 0 entries are
+        skipped (not real monsters.txt ids).  Never raises; -1 when unavailable."""
+        return self._count_monsters(radius, engaged_only=True)
+
+    def _count_monsters(self, radius: int, engaged_only: bool) -> int:
         try:
             if not self.offsets.UnitTable:
                 return -1
@@ -291,15 +308,18 @@ class GameReader:
                 unit = self.proc.read_u64(table + i * 8)
                 while unit and count < 200:
                     txt = self.proc.read_u32(unit + m.UNIT_OFFSET_TXTFILE)
-                    if (txt not in self.merc_txtfiles
-                            and self.proc.read_u8(unit + m.UNIT_OFFSET_IS_CORPSE) != 1):
-                        upath = self.proc.read_ptr(unit + m.UNIT_OFFSET_PATH)
-                        mx = self.proc.read_u16(upath + m.PATH_OFFSET_X) if upath else 0
-                        my = self.proc.read_u16(upath + m.PATH_OFFSET_Y) if upath else 0
-                        if mx or my:  # unloaded instances sit at (0, 0)
-                            d = (mx - px) ** 2 + (my - py) ** 2
-                            if d <= r2:
-                                count += 1
+                    if txt and txt not in self.merc_txtfiles:
+                        mode = self.proc.read_u32(unit + 0x0C)
+                        if (not engaged_only or mode in self._ENGAGED_MODES) \
+                                and self.proc.read_u8(unit + m.UNIT_OFFSET_IS_CORPSE) != 1 \
+                                and mode < self._MONSTER_MODE_DYING:
+                            upath = self.proc.read_ptr(unit + m.UNIT_OFFSET_PATH)
+                            mx = self.proc.read_u16(upath + m.PATH_OFFSET_X) if upath else 0
+                            my = self.proc.read_u16(upath + m.PATH_OFFSET_Y) if upath else 0
+                            if mx or my:  # unloaded instances sit at (0, 0)
+                                d = (mx - px) ** 2 + (my - py) ** 2
+                                if d <= r2:
+                                    count += 1
                     unit = self.proc.read_ptr(unit + m.UNIT_OFFSET_NEXT)
             return count
         except Exception:

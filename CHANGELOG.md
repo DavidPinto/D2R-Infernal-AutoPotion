@@ -5,6 +5,38 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.10-beta] - 2026-08-22
+
+### Validated live (first real-app test round — user-run)
+- **Basic drinking end-to-end works** (#1): thresholds → decisions → SendInput
+  → D2R drinks.
+- **Gamepad drinking works** (#3): the synthetic controller's D-pad is accepted
+  in-game (open question since 1.9.0 — now closed).
+- **Poison urgency works** (#5) with two log cosmetics fixed (below).
+- Mana pre-drink and potion-economy behaviour partially checked; full validation
+  left to broader use.
+
+### Fixed
+- **Event reasons showed the decision percent, not the real one**: while
+  poisoned, the heal line clamps HP% for the *decision*, and that clamped value
+  leaked into log messages ("HP 79%" while actually 85%).  Reasons now always
+  carry the real percentages plus a `[poison]` marker when one applied.
+- **"No … potion left on the belt" re-fire logic**: the notice now reports once
+  per continuous absence — when the potion returns to the belt, a later absence
+  announces itself again instead of staying silent forever.
+
+### Added
+- **`GameReader.engaged_monsters_near(radius=12)`** + `snapshot.monsters_engaged`:
+  counts units within melee radius whose monster mode says they are fighting
+  ({4,5,6,7,9,10,11}) — live-validated mid-combat (2 engaged attackers at radii
+  8/12/20 while passive units at 35+ are excluded).  Flag bytes 0x19/1A/1B are
+  ruled out as hostility markers (zero even on attackers).  NOT yet wired into
+  drinking thresholds: one more combat sample should confirm the mode rule also
+  holds at zero false positives with town NPCs nearby.
+
+Test suite: **138 tests green** (2 new: poison reason string, out-of-stock
+transition); compileall + headless UI smoke pass.
+
 ## [1.9.9-beta] - 2026-08-22
 
 ### Fixed (live-validation & calibration review pass)

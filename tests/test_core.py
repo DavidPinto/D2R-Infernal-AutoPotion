@@ -1135,6 +1135,47 @@ class WatcherTests(unittest.TestCase):
         w._tick(snap)
         self.assertEqual(w.sender.pressed_keys, [("heal", "Q")])
 
+    def test_poison_reason_shows_real_percentage(self):
+        # The event log must show the REAL hp%, not the poison-clamped
+        # decision percent (user-visible bug: "HP 79%" while actually 85%).
+        events = []
+        w = self._watcher()
+        w.on_event = lambda e: events.append(e)
+        snap = self._belt_snap(hp=170, mana=190, max_hp=200, max_mana=200,
+                               columns=[self._col("Q", 602)])
+        snap.states = frozenset({m.STATE_POISON})
+        snap.poisoned = True
+        w._tick(snap)
+        msgs = [e.message for e in events if e.kind == "heal"]
+        self.assertTrue(msgs, "expected a heal event")
+        self.assertIn("HP 85%", msgs[0])
+        self.assertIn("[poison]", msgs[0])
+        self.assertNotIn("HP 79%", msgs[0])
+
+    def test_out_of_stock_reports_once_per_absence(self):
+        # The 'no potion' notice fires once while absent, stays quiet until the
+        # potion returns, and reports again only after a NEW absence.
+        events = []
+        w = self._watcher()
+        w.config.thresholds["healing_potion_at"] = 40
+        w.on_event = lambda e: events.append(e.message)
+
+        def count():
+            return sum(1 for mmsg in events if "No heal potion" in mmsg)
+
+        no_heal = self._belt_snap(hp=70, mana=190, max_hp=200, max_mana=200,
+                                  columns=[self._col("W", 611)])
+        w._tick(no_heal)
+        self.assertEqual(count(), 1)
+        w._tick(no_heal)
+        self.assertEqual(count(), 1)                 # suppressed while absent
+        with_heal = self._belt_snap(hp=70, mana=190, max_hp=200, max_mana=200,
+                                    columns=[self._col("Q", 602)])
+        w._tick(with_heal)                           # stock returns (drink or gate)
+        self.assertEqual(count(), 1)
+        w._tick(no_heal)
+        self.assertEqual(count(), 2)                 # NEW absence reports again
+
     def test_same_or_higher_grade_allowed_after_half_duration(self):
         w = self._watcher()
         w._last_potion_dur["heal"] = 10.24   # Super heal (606) restore window

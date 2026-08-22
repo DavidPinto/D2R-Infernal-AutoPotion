@@ -277,6 +277,17 @@ class PotionWatcher:
             rejuv_life=cfg.threshold("rejuv_potion_at_life"),
             rejuv_mana=cfg.threshold("rejuv_potion_at_mana"),
         )
+        # Reasons show the REAL percentages: the effective percents above are
+        # decision inputs (pre-drink / poison clamps), not display values.
+        marker = " [poison]" if snap.poisoned else ""
+        for act in acts:
+            if act["action"] == "heal":
+                act["reason"] = f"HP {snap.hp_percent}%{marker}"
+            elif act["action"] == "mana":
+                act["reason"] = f"MP {snap.mana_percent}%{marker}"
+            elif act["action"] == "rejuv":
+                act["reason"] = (f"HP {snap.hp_percent}% / "
+                                 f"MP {snap.mana_percent}%{marker}")
         for act in acts:
             kind = act["kind"]
             critical = (kind == "rejuv"
@@ -292,14 +303,14 @@ class PotionWatcher:
             if kind == "rejuv":
                 self._act("rejuv", "rejuv", max(hp_def, mp_def),
                           max(snap.max_hp, snap.max_mana),
-                          f"HP {snap.hp_percent}% / MP {snap.mana_percent}%",
+                          f"HP {snap.hp_percent}% / MP {snap.mana_percent}%{marker}",
                           snap, t, critical=True)
             elif kind == "heal":
                 self._act("heal", "heal", hp_def, snap.max_hp,
-                          f"HP {snap.hp_percent}%", snap, t, critical=True)
+                          f"HP {snap.hp_percent}%{marker}", snap, t, critical=True)
             elif kind == "mana":
                 self._act("mana", "mana", mp_def, snap.max_mana,
-                          f"MP {snap.mana_percent}%", snap, t, critical=True)
+                          f"MP {snap.mana_percent}%{marker}", snap, t, critical=True)
 
     def _merc_tick(self, snap: m.PlayerSnapshot) -> None:
         """Mercenary decisions (only when one is present and alive)."""
@@ -458,6 +469,8 @@ class PotionWatcher:
                 self._out_of_stock.add(action)
                 self._emit("info", f"No {kind} potion left on the belt.", snap)
             return False
+        # Stock exists again: a later absence may announce itself once more.
+        self._out_of_stock.discard(action)
         if isinstance(col, m.BeltColumn) and self._in_effect_covers(
                 action, deficit, max_value, t):
             return False
