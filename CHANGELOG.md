@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sample flag 0 in town).
 
 ### Fixed (found live, under active attack)
+- **Menu detection was dead in every new game session.**  The UI struct lives
+  inside the D2R.exe image, so its absolute address moves with every launch
+  (ASLR) — but `_get_ui_base` preferred the persisted calibrated address over
+  the live pointer chase, reading a stale address from the previous session.
+  The chase now runs first (session-correct, verified against a live
+  calibration: `Inventory` flag idx 2 detects open/closed panels correctly);
+  the calibrated address is only a fallback for builds where the chase fails.
+  `MapShown` no longer appears in the UI-facing open-panel list.
 - **The merc reader latched onto hostile monsters after the merc died.**  With
   the hireling dead (monster mode 12, no corpse flag yet), the "nearest living
   unit with Life stats" last-resort fallback matched a monster standing next

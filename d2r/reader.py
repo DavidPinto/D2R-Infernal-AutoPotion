@@ -617,16 +617,14 @@ class GameReader:
     def _get_ui_base(self) -> int:
         """Return the live UI struct base address.
 
-        Uses calibrated address if available, otherwise falls back to pointer
-        chase from GameData (most reliable) or signature scan."""
+        The struct lives inside the D2R.exe image, so its ABSOLUTE address
+        moves every game launch (ASLR) — a persisted calibrated address is
+        stale by the next session (observed live).  Preference: the live
+        pointer chase from GameData (session-correct), then the calibrated
+        address as a fallback for builds where the chase fails, then the
+        signature-scan offset."""
         if hasattr(self, "_ui_base_cached") and self._ui_base_cached:
             return self._ui_base_cached
-        # Calibrated address from config
-        if self.config is not None:
-            calibrated = self.config.calibrated_ui_address()
-            if calibrated:
-                self._ui_base_cached = calibrated
-                return calibrated
         # Pointer chase: GameData -> +0x8 = UI struct (works on all known builds)
         if self.offsets.GameData:
             game_data_addr = self._base() + self.offsets.GameData
@@ -636,6 +634,15 @@ class GameReader:
                 if len(test_buf) == 0x16D:
                     self._ui_base_cached = ptr
                     return ptr
+        # Calibrated address from config (previous session: may be stale, but
+        # it is the best guess when the chase above did not resolve).
+        if self.config is not None:
+            calibrated = self.config.calibrated_ui_address()
+            if calibrated:
+                test_buf = self.proc.read_bytes(calibrated - 0xA, 0x16D)
+                if len(test_buf) == 0x16D:
+                    self._ui_base_cached = calibrated
+                    return calibrated
         # Fallback: signature scan result
         if self.offsets.UI:
             return self._base() + self.offsets.UI
@@ -851,7 +858,9 @@ class GameReader:
             if self.offsets.UI:
                 menus = self.open_menus()
                 snap.menus_open = self._menus_blocking(menus)
-                snap.open_menu_names = [k for k, v in menus.items() if v]
+                # MapShown is not a panel; keep it out of the UI-facing list.
+                snap.open_menu_names = [k for k, v in menus.items()
+                                        if v and k != "MapShown"]
         except Exception as exc:  # never crash the watcher loop
             snap.error = str(exc)
         return snap
