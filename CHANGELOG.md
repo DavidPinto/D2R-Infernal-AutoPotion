@@ -35,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waits for hostility classification from a real fight (friendly units all
   sample flag 0 in town).
 
+### Removed
+- **Menu-detection calibration UI** — Drinking while the inventory/stash panels
+  are open works perfectly well, so panel-flag mapping serves no purpose in the
+  app.  The Calibrate-tab section and its handlers are gone; the backend stays
+  functional for forks (`GameReader.calibrate_ui` / `open_menus` /
+  `_get_ui_base` plus the config accessors), and `pause_when_menus_open`
+  becomes inert without a mapping (it defaults to no-op behaviour either way).
+
 ### Fixed (found live, under active attack)
 - **Menu calibration could lock onto a noisy counter byte.**  Live sampling
   showed the previously-mapped "Inventory flag" wandering 12–252 within a

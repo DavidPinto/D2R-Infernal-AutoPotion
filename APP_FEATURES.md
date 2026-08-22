@@ -29,6 +29,8 @@
 | **Fast Startup / Connect Flow** | ✅ Working (1.9.8) | Attach + signature scan off the UI thread; "Game not found" status without D2R.exe; no attach attempts without the game; Connect/Reconnect button |
 | **Config Profiles** | ✅ Working | Save/load/delete named profiles; persisted JSON |
 | **Calibrate Wizard** | ✅ Working | Belt-corner scan → infer family → save as potion-code set |
+| **Menu-Detection Calibration** | 🔴 Removed from UI (v1.9.9) | Drinking with panels open works fine — flag mapping unnecessary. Backend kept for forks (`GameReader.calibrate_ui`/`open_menus`); `pause_when_menus_open` is inert without a mapping |
+| **Menu Pause (`pause_when_menus_open`)** | ⚪ Inert without mapping | Config switch retained; with no calibrated flag map the snapshot always reports panels closed |
 | **Diagnostics / Offset Scan** | ✅ Working | Live signature scan; unit table / expansion / stats validation |
 | **Event Log / Session Stats** | ✅ Working | Dashboard counters, per-action counts, exportable log |
 | **Battle Orders Max Tracking** | ✅ Working | Running max follows BO boosts; manual override available |

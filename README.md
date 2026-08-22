@@ -38,7 +38,7 @@ presses the correct belt keys for you.
 - **Persistent log & stats** — Every potion use logged to `config/autopotion.log`; session stats on Dashboard
 - **Global hotkey** — System-wide enable/disable toggle (click-to-capture)
 - **Managed belt columns** — Checkbox per column (Q/W/E/R) to control which columns the app manages
-- **Safe by default** — Pauses when inventory/stash/vendor/menus open; never presses keys outside live game; defaults to disabled
+- **Safe by default** — Never presses keys outside the live game; defaults to disabled. (Drinking while inventory/stash panels are open is fully supported — no pause needed.)
 
 ---
 
@@ -203,6 +203,7 @@ If a D2R update breaks the tool (shows "Offsets unresolved"):
 
 - **Belt refill (auto inventory→belt)** — Hidden in UI; config mapping accessors kept (no UI)
 - **Belt plan / Layout refill** — Logic kept in `d2r/refill.py` + config; UI hidden
+- **Menu-detection calibration** — Removed from the UI (v1.9.9): drinking while inventory/stash panels are open works fine, so panel-flag mapping is unnecessary. The backend (`GameReader.calibrate_ui` / `open_menus`) remains for forks.
 - **Per-potion key bindings (pre-1.8.0)** — Removed; old config keys (`keys.heal`, etc.) kept for compat but ignored
 - **Merc auto-potion** — Working (critical parity since 1.9.7); live in-game feed test still outstanding, gamepad LT feed probe-verified at the XInput level only
 - **Poison bit flip / enemy-nearby detection** — Layouts probed and wired; need one natural poison hit / a fight sample to finish verification

@@ -857,16 +857,15 @@ class MainApp(ctk.CTk):
                                            font=ctk.CTkFont(size=11))
         self._calib_status.pack(anchor="w", padx=12, pady=(2, 6))
 
-        # UI struct calibration (menu detection)
-        w.heading(scroll, "Menu detection calibration").pack(anchor="w", padx=12, pady=(8, 4))
-        ui_calib_row = ctk.CTkFrame(scroll, fg_color="transparent")
-        ui_calib_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
-        self._ui_calib_btn = ctk.CTkButton(ui_calib_row, text="Calibrate menu detection",
-                                     width=280, height=28, command=self._calibrate_ui)
-        self._ui_calib_btn.pack(side="left")
-        self._ui_calib_status = ctk.CTkLabel(scroll, text="", text_color="gray70",
-                                              font=ctk.CTkFont(size=11))
-        self._ui_calib_status.pack(anchor="w", padx=12, pady=(2, 6))
+        # Menu-detection calibration UI removed (2026-08): drinking while the
+        # inventory/stash panels are open works perfectly well, so mapping the
+        # UI-panel flags is not needed for the app itself.  FORKS: the whole
+        # backend stays functional in d2r/reader.py (`calibrate_ui`,
+        # `open_menus`, `_get_ui_base`) plus the config accessors
+        # (`calibrated_ui_address`/`calibrated_ui_flags`/
+        # `calibrated_ui_closed_values`) — a fork can re-add a button that
+        # calls `MainApp._calibrate_ui`-style flow or drive the reader
+        # directly.  See git history for the removed handlers.
 
         merc_row = ctk.CTkFrame(scroll, fg_color="transparent")
         merc_row.pack(anchor="w", padx=12, fill="x", pady=(4, 2))
@@ -1028,53 +1027,13 @@ class MainApp(ctk.CTk):
     def _set_calib_status(self, text: str):
         self._calib_status.configure(text=text)
 
-    def _calibrate_ui(self):
-        """Menu-detection calibration: find the UI struct, then detect which
-        byte flips when the Inventory panel opens/closes (the panel the belt
-        refill and pause-when-menus logic care about most).  Persists the
-        struct address + flag index + closed baseline value."""
-        if not self.connected or not self.reader:
-            self._ui_calib_status.configure(text="Not connected.")
-            return
-        self._ui_calib_status.configure(text="Starting calibration…")
-        self._ui_calib_btn.configure(state="disabled")
-        threading.Thread(target=self._do_full_ui_calibration, daemon=True).start()
-
-    def _do_full_ui_calibration(self):
-        try:
-            def progress(step: str):
-                self.after(0, lambda s=step: self._ui_calib_status.configure(text=self._format_calib_step(s)))
-
-            result = self.reader.calibrate_ui(progress)
-            if result and result.get("address") and result.get("flags"):
-                addr = result["address"]
-                fmap = result["flags"]
-                self.config.set_calibrated_ui_address(addr)
-                self.config.set_calibrated_ui_flags(fmap)
-                if result.get("closed_values"):
-                    self.config.set_calibrated_ui_closed_values(result["closed_values"])
-                self.after(0, lambda: self._ui_calib_status.configure(
-                    text=f"Calibrated! UI struct at {hex(addr)}. {len(fmap)} menu flags mapped. Detection now works."))
-            else:
-                self.after(0, lambda: self._ui_calib_status.configure(
-                    text="Calibration failed. Ensure you're in-game and follow the prompts exactly."))
-        except Exception as exc:
-            self.after(0, lambda: self._ui_calib_status.configure(text=f"Error: {exc}"))
-        finally:
-            self.after(0, lambda: self._ui_calib_btn.configure(state="normal"))
-
-    def _format_calib_step(self, step: str) -> str:
-        if step == "base":
-            return "Step 1/3: Finding UI struct… (close all panels)"
-        if step == "baseline":
-            return "Step 2/3: CLOSE ALL menus — waiting 2s"
-        if step.startswith("open:"):
-            menu = step.split(":", 1)[1].capitalize()
-            return f"Step 3/3: OPEN {menu} now… (3s)"
-        if step.startswith("close:"):
-            menu = step.split(":", 1)[1].capitalize()
-            return f"Step 3/3: CLOSE {menu} now… (2s)"
-        return step
+    # Menu-detection calibration handlers were removed with their UI section
+    # (2026-08) — drinking with panels open is fine, so flag mapping is not
+    # needed.  FORKS: `GameReader.calibrate_ui` in d2r/reader.py is the
+    # self-verifying implementation (stable-baseline / stable-open /
+    # baseline-return checks); persist its result via
+    # `AppConfig.set_calibrated_ui_address/flags/closed_values` and
+    # `open_menus()` picks it up.  See git history for the removed handlers.
 
     def _refresh_learned(self):
         """Show the active combo's potion table as plain text (or the defaults)."""
