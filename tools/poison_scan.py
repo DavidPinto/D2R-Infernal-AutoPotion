@@ -35,8 +35,8 @@ MAX_RUN_SEC = 600.0
 STATE_NAMES = {
     0: "None", 1: "Freeze", 2: "Poison", 3: "Resistfire", 4: "Resistcold",
     5: "Resistlightning", 6: "Resistmagic", 7: "Playerbody", 8: "Resistall",
-    19: "SkillMove", 43: "Stamina", 70: "Warmth", 87: "Justhit",
-    104: "Healthpot", 124: "Manapot", 196: "Antidote", 199: "Staminapot",
+    19: "SkillMove", 43: "Stamina", 70: "Warmth", 86: "Justhit",
+    100: "Healthpot", 106: "Manapot", 196: "Antidote", 199: "Staminapot",
 }
 
 

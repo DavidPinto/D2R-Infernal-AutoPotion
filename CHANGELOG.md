@@ -79,6 +79,16 @@ coords, menu flags closed, unit states `[Alignment]`, wizard backend
 (`scan_item_codes` belt/inventory/corner-code) and UI-base pointer chase all
 correct.
 
+### Validated live (poison — user-run `tools/poison_scan.py`)
+A real poison hit confirmed the app's assumption exactly: **poison = state 2,
+word 0 bit 2 (0x4)** of the unit-states block.  The poison window lasted ~31 s
+while HP slid 291→143 (~4 hp/s plus interleaved hits); chugging a health potion
+raised state 100 "Healthpot" for ~7.7 s (≈ the restore window) and stabilised
+the slide.  The poison→heal-line behaviour is therefore validated end-to-end.
+Leads for later: unmapped stat id **74** appears only while Healthpot is active
+with a decaying value — possibly the engine's remaining-potion-heal pool, which
+would let the waste guard read exact remaining restore instead of computing it.
+
 Test suite: **136 tests green**; compileall + headless UI smoke pass.
 
 ## [1.9.8-beta] - 2026-08-21
