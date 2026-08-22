@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waits for hostility classification from a real fight (friendly units all
   sample flag 0 in town).
 
+### Fixed (found live, under active attack)
+- **The merc reader latched onto hostile monsters after the merc died.**  With
+  the hireling dead (monster mode 12, no corpse flag yet), the "nearest living
+  unit with Life stats" last-resort fallback matched a monster standing next
+  to the player and reported it as the merc (128/128) — the watcher would have
+  kept feeding Shift+belt potions into a fight for nothing.  The fallback is
+  removed: the merc matches ONLY known hireling txtFileNos; dead/despawned is
+  detected via the corpse flag or mode ≥ 12 (DT/DD) and reported as hp=0 /
+  hired-but-dead, so `merc_alive` goes false and no potion is fed.  Live-
+  verified mid-combat: merc correctly reads 0/189 Rogue Scout (dead), player
+  vitals and nearby-monster counts unaffected.
+
 ### Validated live (read-only, game in town)
 Full reader pipeline: offsets resolved, player/class/level/hp/mana, merc
 199/199 + type + level, belt columns/slots/rows, inventory potions with grid

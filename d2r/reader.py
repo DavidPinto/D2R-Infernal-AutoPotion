@@ -192,66 +192,49 @@ class GameReader:
     # via the Calibrate tab for other builds / merc types.
     MERC_TXTFILES = m.MERC_TXTFILES_DEFAULT
 
+    # Monster modes >= this are dying/dead (DT=12, DD=13 in the classic enum).
+    _MONSTER_MODE_DYING = 12
+
     def _read_merc(self) -> dict | None:
         """Read the mercenary unit, or None when no merc unit is in the world.
 
         Returns dict with hp, max_hp, name, type, level.  The hireling is matched
-        by txtFileNo (stable across ticks).  A corpse unit keeps the stats, so a
-        dead-but-hired merc yields hp=0 rather than jumping to a nearby monster.
-        When no known hireling id is present we fall back to the nearest living
-        unit with Life/MaxLife stats (last resort only)."""
+        ONLY by txtFileNo (stable across ticks): matching by 'nearest unit with
+        Life stats' latched onto hostile monsters standing next to the player
+        once the merc died — the app then fed potions into a fight.  A dead
+        merc (corpse flag, or monster mode 12/13 = dying/dead) yields hp=0 so a
+        dead-but-hired merc is never fed.  Other builds' hirelings are covered
+        by adding their ids in the Calibrate tab."""
         base = self._base()
         table = base + self.offsets.UnitTable + m.UNIT_TABLE_MONSTER_OFFSET
 
-        pu, _ = self._find_player_unit()
-        px = py = 0
-        if pu:
-            ppath = self.proc.read_ptr(pu + m.UNIT_OFFSET_PATH)
-            px = self.proc.read_u16(ppath + m.PATH_OFFSET_X) if ppath else 0
-            py = self.proc.read_u16(ppath + m.PATH_OFFSET_Y) if ppath else 0
-
         matched = None      # (unit, raw_stats, txt)
-        matched_corpse = False
-        best_raw = None
-        best_dist = float("inf")
+        matched_dead = False
         for i in range(m.UNIT_TABLE_ENTRIES):
             unit = self.proc.read_u64(table + i * 8)
             while unit:
                 txt = self.proc.read_u32(unit + m.UNIT_OFFSET_TXTFILE)
-                is_corpse = self.proc.read_u8(unit + m.UNIT_OFFSET_IS_CORPSE) == 1
-                stats_list_ex = self.proc.read_ptr(unit + m.UNIT_OFFSET_STATSLISTEX)
-                sp = self.proc.read_ptr(stats_list_ex + m.STATSLIST_STAT_PTR) if stats_list_ex else 0
-                sc = self.proc.read_ptr(stats_list_ex + m.STATSLIST_STAT_COUNT) if stats_list_ex else 0
-                raw = self._read_stats(sp, sc)
-                has_life = m.STAT["Life"] in raw and m.STAT["MaxLife"] in raw
-                if txt in self.merc_txtfiles and has_life:
-                    if not is_corpse:
-                        # Living hireling always wins over a corpse found earlier.
-                        matched = (unit, raw, txt)
-                        matched_corpse = False
-                        break
-                    if matched is None:
-                        matched = (unit, raw, txt)
-                        matched_corpse = True
-                    unit = self.proc.read_ptr(unit + m.UNIT_OFFSET_NEXT)
-                    continue
-                if has_life and not is_corpse:
-                    upath = self.proc.read_ptr(unit + m.UNIT_OFFSET_PATH)
-                    mx = self.proc.read_u16(upath + m.PATH_OFFSET_X) if upath else 0
-                    my = self.proc.read_u16(upath + m.PATH_OFFSET_Y) if upath else 0
-                    d = (mx - px) ** 2 + (my - py) ** 2
-                    if d < best_dist:
-                        best_dist = d
-                        best_raw = raw
+                if txt in self.merc_txtfiles:
+                    is_corpse = self.proc.read_u8(unit + m.UNIT_OFFSET_IS_CORPSE) == 1
+                    mode = self.proc.read_u32(unit + 0x0C)
+                    dead = is_corpse or mode >= self._MONSTER_MODE_DYING
+                    stats_list_ex = self.proc.read_ptr(unit + m.UNIT_OFFSET_STATSLISTEX)
+                    sp = self.proc.read_ptr(stats_list_ex + m.STATSLIST_STAT_PTR) if stats_list_ex else 0
+                    sc = self.proc.read_ptr(stats_list_ex + m.STATSLIST_STAT_COUNT) if stats_list_ex else 0
+                    raw = self._read_stats(sp, sc)
+                    if raw:
+                        if not dead:
+                            matched = (unit, raw, txt)
+                            break
+                        if matched is None:
+                            matched = (unit, raw, txt)
+                            matched_dead = True
                 unit = self.proc.read_ptr(unit + m.UNIT_OFFSET_NEXT)
-            if matched is not None and not matched_corpse:
+            if matched is not None and not matched_dead:
                 break
-        if matched is not None:
-            unit, raw, txt = matched
-        elif best_raw is not None:
-            unit, raw, txt = 0, best_raw, 0
-        else:
+        if matched is None:
             return None
+        unit, raw, txt = matched
         raw = dict(raw)
         if unit:
             # The base MaxLife stat is the un-geared max.  The stats-list's
@@ -266,6 +249,8 @@ class GameReader:
                 if item_max > raw.get(m.STAT["MaxLife"], 0):
                     raw[m.STAT["MaxLife"]] = item_max
         hp, max_hp = self._merc_values(raw)
+        if matched_dead:
+            hp = 0   # hired-but-dead: report dead so the watcher never feeds it
         level = raw.get(m.STAT["Level"], 0)
         # The hireling's generated name is a UI resource string, not a field on
         # the unit (reading unit+0x2C as UTF-16 only ever yields garbage), so we
