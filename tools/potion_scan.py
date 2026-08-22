@@ -39,7 +39,7 @@ LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 POLL_SEC = 0.02
 STAT_ID = 74
 MAX_RUN_SEC = 600.0
-HEALTHPOT_STATE_BIT = 32 * 0 + 100   # state 100, word 0
+HEALTHPOT_STATE_ID = 100   # word 3, bit 4
 
 
 def main() -> int:
@@ -66,9 +66,12 @@ def main() -> int:
         sp = proc.read_ptr(slex_now + m.STATSLIST_STAT_PTR)
         sc = proc.read_ptr(slex_now + m.STATSLIST_STAT_COUNT)
         raw = r._read_stats(sp, sc)
-        words0 = proc.read_u32(slex_now + m.STATSLIST_STATES_OFFSET)
+        # State 100 lives in word 3 (bit 100 % 32).
+        w = proc.read_u32(slex_now + m.STATSLIST_STATES_OFFSET
+                          + (HEALTHPOT_STATE_ID // 32) * 4)
+        healthpot = bool(w & (1 << (HEALTHPOT_STATE_ID % 32)))
         hp = raw.get(m.STAT["Life"], 0) >> 8
-        return raw.get(STAT_ID), hp, bool(words0 & (1 << 100))
+        return raw.get(STAT_ID), hp, healthpot
 
     captures: list[dict] = []
     cur: dict | None = None
