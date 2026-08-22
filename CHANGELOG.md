@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sample flag 0 in town).
 
 ### Fixed (found live, under active attack)
+- **Menu calibration could lock onto a noisy counter byte.**  Live sampling
+  showed the previously-mapped "Inventory flag" wandering 12–252 within a
+  second (a data byte, not a flag) — the single-shot largest-diff heuristic
+  had picked it, making open/closed detection flap while idle.  The wizard now
+  self-verifies: a byte qualifies only if it is stable across baseline
+  samples, holds ONE constant different value across ~1 s of open samples,
+  and returns to its exact baseline after closing (the known classic index is
+  preferred among qualifiers).  Re-run *Calibrate menu detection* once to
+  replace the bad mapping.
 - **Menu detection was dead in every new game session.**  The UI struct lives
   inside the D2R.exe image, so its absolute address moves with every launch
   (ASLR) — but `_get_ui_base` preferred the persisted calibrated address over

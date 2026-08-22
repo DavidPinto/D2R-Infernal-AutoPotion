@@ -695,87 +695,85 @@ class GameReader:
         menus["MapShown"] = self.proc.read_u8(ui) != 0
         return menus
 
+    def _ui_samples(self, ui: int, n: int, gap: float = 0.12):
+        """n snapshots of the UI struct region, or None if any read fails."""
+        out = []
+        for _ in range(n):
+            buf = self.proc.read_bytes(ui - 0xA, 0x16D)
+            if len(buf) != 0x16D:
+                return None
+            out.append(buf)
+            time.sleep(gap)
+        return out
+
     def calibrate_ui(self, progress_cb: callable = None) -> dict | None:
-        """Interactive UI calibration - detects Inventory flag index by watching changes.
+        """Interactive UI calibration: detect the byte that flips when the
+        Inventory panel opens/closes.
 
-        Simple process:
-        1. Baseline (all menus closed)
-        2. Open Inventory -> detect which index changes
-        3. Close Inventory -> verify
+        Steps: baseline (all closed) -> user opens Inventory -> user closes it.
+        A byte qualifies ONLY if it is stable in every phase and returns to its
+        exact baseline after closing — the earlier single-shot largest-diff
+        heuristic once locked onto a noisy counter byte (observed live: values
+        wandering 12..252 within a second) that had nothing to do with panels,
+        which made detection flap between open/closed while idle.
 
-        Returns dict with 'address' and 'flags' {menu_name: byte_index}.
-        Only Inventory is calibrated (most common/needed); other menus use defaults.
-        """
-        from . import models as m
-
+        Returns dict with 'address', 'flags' {menu_name: byte_index} and
+        'closed_values' {menu_name: baseline_byte}, or None on any failure."""
         if progress_cb:
             progress_cb("base")
         ui = self._get_ui_base()
         if not ui:
             return None
-
-        # Test read
-        test = self.proc.read_bytes(ui - 0xA, 0x16D)
-        if len(test) != 0x16D:
+        if len(self.proc.read_bytes(ui - 0xA, 0x16D)) != 0x16D:
             return None
 
-        # Single baseline: all menus closed
+        menu_name = "Inventory"
+
+        # Baseline: everything closed; the bytes we compare against later must
+        # themselves be stable, otherwise no reliable mapping exists.
         if progress_cb:
             progress_cb("baseline")
         time.sleep(2.0)
-        buf_base = self.proc.read_bytes(ui - 0xA, 0x16D)
-        if len(buf_base) != 0x16D:
+        base_samples = self._ui_samples(ui, 4)
+        if not base_samples:
             return None
+        base = base_samples[0]
 
-        # Calibrate Inventory only (most common/needed)
-        menu_name = "Inventory"
-        
-        # Open Inventory
+        # User opens the panel; qualifying bytes hold ONE constant value that
+        # differs from the baseline across all samples.
         if progress_cb:
             progress_cb(f"open:{menu_name}")
-        time.sleep(3.0)  # user opens inventory
-        buf_open = self.proc.read_bytes(ui - 0xA, 0x16D)
-        if len(buf_open) != 0x16D:
+        time.sleep(3.0)
+        open_samples = self._ui_samples(ui, 8)
+        if not open_samples:
             return None
+        candidates = []
+        for i in range(0x16D):
+            if any(s[i] != base[i] for s in base_samples):
+                continue                      # baseline itself noisy -> skip
+            open_vals = {s[i] for s in open_samples}
+            if len(open_vals) == 1 and next(iter(open_vals)) != base[i]:
+                candidates.append(i)
 
-        # Find ALL indices that changed (not just 0->non-zero)
-        changed = [(i, buf_base[i], buf_open[i]) for i in range(0x16D) if buf_base[i] != buf_open[i]]
-        best_idx = None
-        if not changed:
-            # Fallback to default index
-            from . import models as m
-            fmap = {menu_name: m.MENU_FLAGS.get(menu_name, 0)}
-        else:
-            # Pick the index with the largest change magnitude (most reliable)
-            # Prefer indices that went 0->non-zero, but accept any significant change
-            best_score = -1
-            for idx, old_val, new_val in changed:
-                score = abs(new_val - old_val)
-                if old_val == 0 and new_val != 0:
-                    score += 100  # strong preference for 0->non-zero
-                if score > best_score:
-                    best_score = score
-                    best_idx = idx
-
-            if best_idx is not None:
-                fmap = {menu_name: best_idx}
-            else:
-                from . import models as m
-                fmap = {menu_name: m.MENU_FLAGS.get(menu_name, 0)}
-
-        # Close Inventory
+        # User closes the panel; a true flag returns to its exact baseline.
         if progress_cb:
             progress_cb(f"close:{menu_name}")
         time.sleep(2.0)
-
-        # Verify final baseline (all closed)
-        buf_final = self.proc.read_bytes(ui - 0xA, 0x16D)
-        if len(buf_final) != 0x16D:
+        close_samples = self._ui_samples(ui, 4)
+        if not close_samples:
+            return None
+        verified = [i for i in candidates
+                    if all(s[i] == base[i] for s in close_samples)]
+        if not verified:
             return None
 
-        # Store baseline values for open_menus comparison
-        closed_values = {menu_name: buf_base[best_idx] if best_idx is not None else buf_base[m.MENU_FLAGS.get(menu_name, 0)]}
-        return {"address": ui, "flags": fmap, "closed_values": closed_values}
+        # Several bytes may legitimately flip together; prefer the known
+        # classic index when it passed, else the lowest.
+        default_idx = m.MENU_FLAGS.get(menu_name)
+        best = default_idx if default_idx in verified else min(verified)
+        return {"address": ui,
+                "flags": {menu_name: best},
+                "closed_values": {menu_name: base[best]}}
 
     # ----------------------------------------------------------- snapshot
     def snapshot(self) -> m.PlayerSnapshot:
