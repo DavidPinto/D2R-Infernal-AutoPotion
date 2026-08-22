@@ -64,7 +64,10 @@ MERC_TYPE = {
 # The client keeps one hash table per unit type.  Each sub-table is 128 buckets
 # of 8 bytes (a pointer), i.e. 0x400 bytes apart.
 UNIT_TABLE_ENTRIES = 128
-UNIT_TABLE_PLAYER_OFFSET = 0x0
+# The unit-hash tables are one per unit type, 128 pointers (0x400 bytes) each:
+# +0x0000 player(0), +0x0400 monster/NPC(1), +0x0800 object(2), +0x0C00
+# missile(3), +0x1000 item(4).  Live-verified in town: NPCs + hireling appear
+# at +0x400 with real path coordinates; items at +0x1000 as before.
 UNIT_TABLE_MONSTER_OFFSET = 0x400
 UNIT_TABLE_ITEM_OFFSET = 0x1000
 

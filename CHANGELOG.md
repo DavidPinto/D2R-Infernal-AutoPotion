@@ -5,6 +5,45 @@ All notable changes to the D2R Infernal Auto Potion tool.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.9-beta] - 2026-08-22
+
+### Fixed (live-validation & calibration review pass)
+- **`calibrate_ui` crashed with `NameError` when no byte changed** (e.g. the
+  Inventory was not opened in time during the guided steps): the fallback path
+  referenced an undefined `best_idx`.  The wizard now degrades gracefully to
+  the default flag index.
+- **Menu open/close detection ignored non-zero baselines**: the comparison
+  treated a calibrated flag byte with baseline > 20 as "open" only after a
+  >25 % magnitude change — flag bytes are 0/1, so such menus could never read
+  as open.  Flag-like baselines (≤15) now compare exactly; large baselines
+  keep the noise threshold.
+- **Calibration instructions/README mismatch**: the README told users to fill
+  belt slots "0, 4, 8, 12" but `corner_potion_code` requires the two edge
+  slots of *every row* (columns Q and R).  Docs fixed; the wizard text now
+  also states the 2-row-belt minimum.
+- Menu-calibration button/docstring now say what it actually does (Inventory
+  detection), not "open/close each" of all menus.
+
+### Added
+- **`GameReader.nearby_monsters(radius)`** — count of living monster-table
+  units near the player, via the monster/NPC hash at `UnitTable + 0x400`
+  (tables are one per unit type, 0x400 bytes apart: player 0x0000, monster
+  0x0400, object 0x0800, missile 0x0C00, item 0x1000 — live-verified in town:
+  13 units incl. the hireling + town NPCs with real positions; radius sweep
+  10/20/40/80 → 0/2/5/12 with the merc excluded by its known txtFileNo).
+  This is the foundation for enemy-nearby urgency; wiring it into drinking
+  waits for hostility classification from a real fight (friendly units all
+  sample flag 0 in town).
+
+### Validated live (read-only, game in town)
+Full reader pipeline: offsets resolved, player/class/level/hp/mana, merc
+199/199 + type + level, belt columns/slots/rows, inventory potions with grid
+coords, menu flags closed, unit states `[Alignment]`, wizard backend
+(`scan_item_codes` belt/inventory/corner-code) and UI-base pointer chase all
+correct.
+
+Test suite: **136 tests green**; compileall + headless UI smoke pass.
+
 ## [1.9.8-beta] - 2026-08-21
 
 ### Changed (startup speed & connection flow)

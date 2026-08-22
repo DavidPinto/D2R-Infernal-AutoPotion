@@ -280,6 +280,46 @@ class GameReader:
             "level": level,
         }
 
+    def nearby_monsters(self, radius: int = 40) -> int:
+        """Count living monster-table units within ``radius`` of the player.
+
+        Walks the monster/NPC hash (UnitTable + 0x400, the same table
+        :meth:`_read_merc` uses).  Town NPCs and the hireling live here too, so
+        this is strictly 'units near' until hostility classification is
+        calibrated against a real fight (friendly units all read flag 0 in the
+        sampled unit-data bytes).  Corpses and known hireling ids are excluded.
+        Never raises; returns -1 when the player/unit table is unavailable."""
+        try:
+            if not self.offsets.UnitTable:
+                return -1
+            pu, _ = self._find_player_unit()
+            if not pu:
+                return -1
+            ppath = self.proc.read_ptr(pu + m.UNIT_OFFSET_PATH)
+            px = self.proc.read_u16(ppath + m.PATH_OFFSET_X) if ppath else 0
+            py = self.proc.read_u16(ppath + m.PATH_OFFSET_Y) if ppath else 0
+
+            table = self._base() + self.offsets.UnitTable + m.UNIT_TABLE_MONSTER_OFFSET
+            r2 = radius * radius
+            count = 0
+            for i in range(m.UNIT_TABLE_ENTRIES):
+                unit = self.proc.read_u64(table + i * 8)
+                while unit and count < 200:
+                    txt = self.proc.read_u32(unit + m.UNIT_OFFSET_TXTFILE)
+                    if (txt not in self.merc_txtfiles
+                            and self.proc.read_u8(unit + m.UNIT_OFFSET_IS_CORPSE) != 1):
+                        upath = self.proc.read_ptr(unit + m.UNIT_OFFSET_PATH)
+                        mx = self.proc.read_u16(upath + m.PATH_OFFSET_X) if upath else 0
+                        my = self.proc.read_u16(upath + m.PATH_OFFSET_Y) if upath else 0
+                        if mx or my:  # unloaded instances sit at (0, 0)
+                            d = (mx - px) ** 2 + (my - py) ** 2
+                            if d <= r2:
+                                count += 1
+                    unit = self.proc.read_ptr(unit + m.UNIT_OFFSET_NEXT)
+            return count
+        except Exception:
+            return -1
+
     @staticmethod
     def _track_max(prev_max: int, stat: int, current: int) -> int:
         """Tracked max HP/MP: shrink to ``stat`` when at/over it, else grow.
@@ -648,17 +688,15 @@ class GameReader:
                 continue
             current_val = buf[idx]
             if name in closed_values:
-                # Compare against baseline: consider "open" if value changes significantly
                 closed_val = closed_values[name]
-                if closed_val == 0:
-                    # If baseline was 0, any non-zero is open
-                    menus[name] = current_val != 0
+                if closed_val <= 15:
+                    # Flag-like baseline: the menu flag is simply set/cleared.
+                    menus[name] = current_val != closed_val
                 else:
-                    # Check for significant change in either direction
+                    # Large baseline value: only a significant change counts as
+                    # "open" so noisy overlapping data cannot flap the state.
                     diff = abs(current_val - closed_val)
-                    # Threshold: 25% of closed value or 20, whichever is larger
-                    threshold = max(20, closed_val // 4)
-                    menus[name] = diff > threshold
+                    menus[name] = diff > max(20, closed_val // 4)
             else:
                 # Fallback: non-zero check
                 menus[name] = current_val != 0
@@ -710,6 +748,7 @@ class GameReader:
 
         # Find ALL indices that changed (not just 0->non-zero)
         changed = [(i, buf_base[i], buf_open[i]) for i in range(0x16D) if buf_base[i] != buf_open[i]]
+        best_idx = None
         if not changed:
             # Fallback to default index
             from . import models as m
@@ -717,7 +756,6 @@ class GameReader:
         else:
             # Pick the index with the largest change magnitude (most reliable)
             # Prefer indices that went 0->non-zero, but accept any significant change
-            best_idx = None
             best_score = -1
             for idx, old_val, new_val in changed:
                 score = abs(new_val - old_val)

@@ -85,7 +85,8 @@ _CALIB_INSTRUCTIONS = (
     "versions and mods.  Calibrate once — the app finds the codes itself and "
     "remembers them forever.\n\n"
     "1. In-game, put ONE potion you can identify (Minor Health or Minor Mana — "
-    "available from the start) in ALL 4 corners of your belt.\n"
+    "available from the start) in ALL 4 corners of your belt (the two edge "
+    "slots of every row — needs at least a 2-row belt).\n"
     "2. Pick that same potion in the list and click 'Scan belt corners'.\n"
     "3. The app reads the belt slots in memory, finds the code automatically, "
     "saves it, and fills in the rest of its family (Minor→Super) when the codes "
@@ -860,7 +861,7 @@ class MainApp(ctk.CTk):
         w.heading(scroll, "Menu detection calibration").pack(anchor="w", padx=12, pady=(8, 4))
         ui_calib_row = ctk.CTkFrame(scroll, fg_color="transparent")
         ui_calib_row.pack(anchor="w", padx=12, fill="x", pady=(0, 4))
-        self._ui_calib_btn = ctk.CTkButton(ui_calib_row, text="Calibrate menus (open/close each)",
+        self._ui_calib_btn = ctk.CTkButton(ui_calib_row, text="Calibrate menu detection",
                                      width=280, height=28, command=self._calibrate_ui)
         self._ui_calib_btn.pack(side="left")
         self._ui_calib_status = ctk.CTkLabel(scroll, text="", text_color="gray70",
@@ -1028,12 +1029,10 @@ class MainApp(ctk.CTk):
         self._calib_status.configure(text=text)
 
     def _calibrate_ui(self):
-        """Full menu calibration: guides user to open/close each menu.
-
-        Finds UI struct address, then for each blocking menu (Inventory,
-        Stash, Character, etc.) asks user to open it, detects the changing
-        byte, then asks to close it. Persists address + flag index map.
-        """
+        """Menu-detection calibration: find the UI struct, then detect which
+        byte flips when the Inventory panel opens/closes (the panel the belt
+        refill and pause-when-menus logic care about most).  Persists the
+        struct address + flag index + closed baseline value."""
         if not self.connected or not self.reader:
             self._ui_calib_status.configure(text="Not connected.")
             return

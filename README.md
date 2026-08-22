@@ -10,7 +10,7 @@ A clean, from-scratch port of the original Go reference tool
 kept with credit). It watches your HP / Mana / Mercenary in game memory and
 presses the correct belt keys for you.
 
-> **Version:** `1.9.8-beta` — see [CHANGELOG.md](CHANGELOG.md).
+> **Version:** `1.9.9-beta` — see [CHANGELOG.md](CHANGELOG.md).
 > **Game builds:** tested on Infernal Edition `3.0.91636`. See
 > [Limitations](#limitations) below.
 
@@ -127,10 +127,10 @@ When enabled (*Triggers* tab → **Reach Buried Rejuv**, default OFF), and HP dr
 - **Avoid mixing families in one column** — The app reads the lowest slot; mixed columns cause wrong potion detection
 
 ### Calibration
-1. Put ONE known potion (e.g., Minor Mana) in **all 4 belt corners** (slots 0, 4, 8, 12)
+1. Put ONE known potion (e.g., Minor Mana) in **all 4 belt corners** — the two edge slots of every row (columns Q and R); needs at least a 2-row belt
 2. Select that potion type in the Calibrate tab
-4. Click **Scan belt corners** → app reads the code and auto-fills the family
-5. Repeat for each potion family you use (Heal, Mana, Rejuv)
+3. Click **Scan belt corners** → app reads the code and auto-fills the family
+4. Repeat for each potion family you use (Heal, Mana, Rejuv)
 
 ### Thresholds (Defaults)
 | Action | Trigger |
